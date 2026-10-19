@@ -1,0 +1,20 @@
+# NO subir al repositorio
+node_modules/
+generated/
+.env
+.env.local
+.env.*.local
+
+# Prisma
+/generated/prisma
+
+# Pruebas y cobertura
+coverage/
+*.log
+
+# Sistema operativo y editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

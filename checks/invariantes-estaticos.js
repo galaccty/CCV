@@ -1,0 +1,227 @@
+﻿/**
+ * GUARDIANES ESTATICOS DE LOS INVARIANTES
+ * ========================================
+ * Estos chequeos corren en cada push y hacen fallar el build si alguien
+ * rompe un invariante por la via que los tests no alcanzan a ver.
+ *
+ *   Invariante 1:  nada escribe los saldos de `cuenta_local` por fuera del
+ *                  servicio del ledger. Incluye SQL escrito a mano.
+ *   Invariante 7:  nada escribe `producto_variante.stock` por fuera del
+ *                  modulo de stock.
+ *   Invariante 4a: nadie importa el cliente de Wompi por fuera del modulo
+ *                  `wompi`.
+ *
+ * Se ejecutan juntos desde CI:
+ *   node checks/invariantes-estaticos.js
+ *
+ * Salen con codigo 1 si algo falla, que es lo que bloquea el merge.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * Carpetas que se revisan.
+ *
+ * OJO: prisma/migrations queda FUERA a proposito. Esas migraciones hacen
+ * `CREATE TABLE cuenta_local (saldo_deuda ...)` y eso es DDL, no una
+ * escritura de saldo en tiempo de ejecucion.
+ */
+const CARPETAS_REVISADAS = ['src', 'scripts', 'tests'];
+
+/** Extensiones de codigo que nos interesan. */
+const EXTENSIONES = new Set(['.js', '.mjs', '.cjs', '.ts', '.mts']);
+
+/**
+ * Archivos autorizados a romper cada invariante.
+ * Vacio en la Etapa 1 a proposito: todavia no hay ledger ni modulo de stock,
+ * asi que cualquier escritura seria una violacion.
+ */
+export const ARCHIVOS_PERMITIDOS = {
+  1: ['src/services/ledger.js'],
+  7: ['src/services/stock.js'],
+  4: ['src/lib/wompi.js'],
+};
+
+/**
+ * Las pruebas de invariantes SI pueden romperlas a proposito: su trabajo es
+ * intentar violarlas. Por eso los archivos que se llaman invariante_01_* o
+ * invariante_07_* estan autorizados.
+ */
+function autorizadoComoPruebaDeInvariante(invariante, rutaRelativa) {
+  return rutaRelativa.includes(`invariante_0${invariante}_`);
+}
+
+// ---------------------------------------------------------------------------
+// Reglas de deteccion
+// ---------------------------------------------------------------------------
+
+const COLUMNAS_SALDO = ['saldo_deuda', 'saldo_por_pagar', 'saldo_congelado'];
+
+/** SQL escrito a mano: UPDATE cuenta_local ... SET saldo_deuda = ... */
+const REGLA_SQL_SALDO = new RegExp(
+  String.raw`UPDATE\s+"?cuenta_local"?[\s\S]{0,120}?\bSET\b`,
+  'i',
+);
+
+/** ORM: prisma.cuentaLocal.update / upsert / delete... */
+const REGLA_ORM_SALDO = new RegExp(
+  String.raw`\b(cuentaLocal|cuenta_local)\s*\.\s*(update|updateMany|upsert|create|createMany|delete|deleteMany)\b`,
+  'i',
+);
+
+/** Asignacion directa a una columna de saldo. */
+const REGLA_ASIGNACION_SALDO = new RegExp(
+  `${COLUMNAS_SALDO.join('|')}\\s*(=|:=)\\s*[^=]`,
+  'i',
+);
+
+const REGLA_SQL_STOCK = new RegExp(
+  String.raw`(UPDATE|INSERT)\s+"?producto_variante"?[\s\S]{0,140}?\bstock\b`,
+  'i',
+);
+
+const REGLA_ORM_STOCK = new RegExp(
+  String.raw`\b(productoVariante|producto_variante)\s*\.\s*(update|updateMany|upsert|create|createMany)\b`,
+  'i',
+);
+
+const REGLA_ASIGNACION_STOCK = new RegExp(
+  String.raw`\bstock\s*(:=|=)\s*[^=]`,
+  'i',
+);
+
+const REGLA_IMPORT_WOMPI = new RegExp(
+  String.raw`(from|require\()\s*['"][^'"]*lib/wompi(\.js)?['"]`,
+);
+
+// ---------------------------------------------------------------------------
+// Recorrido de archivos
+// ---------------------------------------------------------------------------
+
+function* recorrer(directorio) {
+  for (const entrada of fs.readdirSync(directorio, { withFileTypes: true })) {
+    const completa = path.join(directorio, entrada.name);
+    if (entrada.isDirectory()) {
+      if (entrada.name === 'node_modules' || entrada.name === 'generated') continue;
+      yield* recorrer(completa);
+    } else if (EXTENSIONES.has(path.extname(entrada.name))) {
+      yield completa;
+    }
+  }
+}
+
+function lineasDe(archivo) {
+  return fs.readFileSync(archivo, 'utf8').split(/\r?\n/);
+}
+
+/** Ignora las lineas que son solo comentario. */
+function esComentario(linea) {
+  const t = linea.trim();
+  return t.startsWith('//') || t.startsWith('*') || t.startsWith('/*') || t.startsWith('#');
+}
+
+// ---------------------------------------------------------------------------
+// Chequeos
+// ---------------------------------------------------------------------------
+
+const listaBlanca = (invariante, relativa) =>
+  ARCHIVOS_PERMITIDOS[invariante].includes(relativa) ||
+  autorizadoComoPruebaDeInvariante(invariante, relativa);
+
+function revisarInvariante({ invariante, nombre, reglas, exclusiones }) {
+  const violaciones = [];
+
+  for (const carpeta of CARPETAS_REVISADAS) {
+    const absoluta = path.join(RAIZ, carpeta);
+    if (!fs.existsSync(absoluta)) continue;
+
+    for (const archivo of recorrer(absoluta)) {
+      const relativa = path.relative(RAIZ, archivo).replace(/\\/g, '/');
+      if (exclusiones(relativa)) continue;
+      if (listaBlanca(invariante, relativa)) continue;
+
+      lineasDe(archivo).forEach((linea, indice) => {
+        if (esComentario(linea)) return;
+        for (const { patron, como } of reglas) {
+          if (patron.test(linea)) {
+            violaciones.push({
+              invariante,
+              nombre,
+              archivo: relativa,
+              linea: indice + 1,
+              como,
+              texto: linea.trim().slice(0, 100),
+            });
+            break;
+          }
+        }
+      });
+    }
+  }
+
+  return violaciones;
+}
+
+export function ejecutarChequeos() {
+  const resultados = [
+    revisarInvariante({
+      invariante: 1,
+      nombre: 'El ledger es la fuente de verdad',
+      reglas: [
+        { patron: REGLA_SQL_SALDO, como: 'UPDATE SQL sobre cuenta_local' },
+        { patron: REGLA_ORM_SALDO, como: 'escritura por el ORM sobre cuenta_local' },
+        { patron: REGLA_ASIGNACION_SALDO, como: 'asignacion directa a una columna de saldo' },
+      ],
+      exclusiones: () => false,
+    }),
+
+    revisarInvariante({
+      invariante: 7,
+      nombre: 'El stock se descuenta solo por el modulo de stock',
+      reglas: [
+        { patron: REGLA_SQL_STOCK, como: 'escritura SQL sobre producto_variante.stock' },
+        { patron: REGLA_ORM_STOCK, como: 'escritura por el ORM sobre producto_variante' },
+        { patron: REGLA_ASIGNACION_STOCK, como: 'asignacion directa a stock' },
+      ],
+      exclusiones: () => false,
+    }),
+
+    revisarInvariante({
+      invariante: 4,
+      nombre: 'El cliente de Wompi solo se importa en su modulo',
+      reglas: [{ patron: REGLA_IMPORT_WOMPI, como: 'importacion del cliente de Wompi' }],
+      exclusiones: () => false,
+    }),
+  ];
+
+  return resultados.flat();
+}
+
+// Si se ejecuta directo, informa y sale con codigo 1 si hay violaciones.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const violaciones = ejecutarChequeos();
+
+  if (violaciones.length === 0) {
+    console.log('Invariantes estaticos: OK (1, 4 y 7 sin violaciones).');
+    process.exit(0);
+  }
+
+  console.error('\nINVARIANTES ROTOS\n');
+  for (const v of violaciones) {
+    console.error(`  [invariante ${v.invariante}] ${v.nombre}`);
+    console.error(`    archivo: ${v.archivo}:${v.linea}`);
+    console.error(`    motivo:  ${v.como}`);
+    console.error(`    linea:   ${v.texto}`);
+    console.error('');
+  }
+  console.error(
+    'Si necesitas una excepcion, agregala de forma consciente y anota el porque\n' +
+      'en el pull request. Un invariante que se rompe a proposito y sin que nadie\n' +
+      'lo note deja de proteger nada.\n',
+  );
+  process.exit(1);
+}

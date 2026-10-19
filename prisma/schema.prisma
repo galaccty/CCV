@@ -1,0 +1,142 @@
+// Esquema Prisma - Etapa 1
+//
+// Regla del proyecto: los nombres de tablas y columnas en la base de datos
+// son exactamente los de la especificacion V4, en snake_case. Prisma los usa
+// solo como cliente; las migraciones SQL reales viven en prisma/migrations/.
+//
+// Si agregas una tabla o columna, NO edites una migracion ya aplicada.
+// Agrega la migracion nueva con:
+//   npx prisma migrate dev --name <nombre>
+// y despues revisa el SQL en prisma/migrations/<nombre>/migration.sql.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// 4.1 usuario
+// ---------------------------------------------------------------------------
+
+model Usuario {
+  id              Int      @id @default(autoincrement())
+  nombre          String   @db.VarChar(120)
+  email           String   @unique @db.VarChar(255)
+  emailVerificado Boolean  @default(false) @map("email_verificado")
+  passwordHash    String   @map("password_hash") @db.VarChar(255)
+  aceptoTerminos  Boolean  @map("acepto_terminos")
+  fechaAceptacion DateTime @map("fecha_aceptacion") @db.Timestamptz(3)
+  activo          Boolean  @default(true)
+  creadoEn        DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn   DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  roles     UsuarioRol[]
+  tokens    TokenVerificacion[]
+  auditoria AuditoriaAdmin[]
+
+  @@map("usuario")
+}
+
+/// una persona puede ser comprador y vendedor al mismo tiempo (multi-rol)
+model UsuarioRol {
+  usuarioId Int      @map("usuario_id")
+  rol       Rol
+  creadoEn  DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@id([usuarioId, rol])
+  @@index([rol])
+  @@map("usuario_rol")
+}
+
+enum Rol {
+  comprador
+  vendedor
+  admin
+
+  @@map("rol")
+}
+
+// ---------------------------------------------------------------------------
+// 4.2 token_verificacion
+// ---------------------------------------------------------------------------
+
+model TokenVerificacion {
+  id        Int       @id @default(autoincrement())
+  usuarioId Int       @map("usuario_id")
+  tipo      TipoToken
+  tokenHash String    @unique @map("token_hash") @db.VarChar(255)
+  expira    DateTime  @db.Timestamptz(3)
+  usado     Boolean   @default(false)
+  creadoEn  DateTime  @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId, tipo])
+  @@index([expira])
+  @@map("token_verificacion")
+}
+
+enum TipoToken {
+  verificar_email
+  reset_password
+
+  @@map("tipo_token")
+}
+
+// ---------------------------------------------------------------------------
+// 4.13 configuracion  (clave-valor administrada por el admin)
+// ---------------------------------------------------------------------------
+
+model Configuracion {
+  clave       String   @id @db.VarChar(80)
+  valor       String   @db.Text
+  tipo        TipoValor
+  descripcion String?  @db.VarChar(300)
+  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  @@map("configuracion")
+}
+
+enum TipoValor {
+  entero
+  numero
+  texto
+  booleano
+
+  @@map("tipo_valor")
+}
+
+// ---------------------------------------------------------------------------
+// 4.10 auditoria_admin
+// ---------------------------------------------------------------------------
+
+model AuditoriaAdmin {
+  id        Int          @id @default(autoincrement())
+  origen    OrigenAdmin
+  adminId   Int?         @map("admin_id")
+  accion    String       @db.VarChar(80)
+  objeto    String       @db.VarChar(80)
+  objetoId  String?      @map("objeto_id") @db.VarChar(80)
+  detalle   Json?
+  fecha     DateTime     @default(now()) @db.Timestamptz(3)
+
+  admin Usuario? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([objeto, objetoId])
+  @@index([fecha])
+  @@map("auditoria_admin")
+}
+
+enum OrigenAdmin {
+  admin
+  sistema
+
+  @@map("origen_admin")
+}

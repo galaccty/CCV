@@ -1,0 +1,48 @@
+{
+  "name": "centro-comercial-virtual-backend",
+  "version": "0.1.0",
+  "scripts": {
+    "test": "node --test --test-reporter=spec tests/**/*.test.js",
+    "start": "node src/server.js",
+    "db:reset": "prisma migrate reset",
+    "check:pruebas": "node checks/verificar-pruebas-invariantes.js",
+    "crear-admin": "node scripts/crear-admin.js",
+    "db:dev": "prisma migrate dev",
+    "db:migrate": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "db:generate": "prisma generate",
+    "dev": "node --watch src/server.js",
+    "seed": "node scripts/seed.js",
+    "verificar": "npm run check:invariantes && npm run check:pruebas && npm test",
+    "check:invariantes": "node checks/invariantes-estaticos.js",
+    "test:invariantes": "node --test --test-reporter=spec tests/invariantes/*.test.js",
+    "probar-registro": "node scripts/probar-registro.js",
+    "db:test:reset": "prisma migrate reset --force --skip-seed",
+    "db:iniciar": "node scripts/pg.js iniciar",
+    "db:parar": "node scripts/pg.js parar",
+    "db:reiniciar": "node scripts/pg.js reiniciar",
+    "db:estado": "node scripts/pg.js estado"
+  },
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
+    "pino": "^10.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "pino-pretty": "^13.2.0",
+    "prisma": "^6.19.3",
+    "supertest": "^7.3.1"
+  },
+  "description": "Backend del Centro Comercial Virtual (marketplace multi-vendedor)",
+  "engines": {
+    "node": ">=20.11"
+  }
+}

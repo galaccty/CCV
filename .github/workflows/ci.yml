@@ -1,0 +1,71 @@
+# CI del backend del Centro Comercial Virtual
+#
+# Corre en cada push y en cada pull request. Ejecuta, en este orden:
+#   1. Los guardianes estaticos de los invariantes 1, 4 y 7.
+#   2. La verificacion de que existen los doce archivos de prueba.
+#   3. Todas las pruebas automaticas.
+#
+# Las pruebas que necesitan base de datos corren solo si hay DATABASE_URL
+# configurada. En GitHub Actions hay un Postgres de servicio, asi que si
+# corren completas.
+
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  verificar:
+    name: Guardianes y pruebas
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ccv_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ccv_test?schema=public
+      SESSION_SECRET: ci-secret-de-pruebas-0123456789abcdef
+      SESSION_COOKIE_SECURE: "false"
+      MAIL_DRIVER: ninguno
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Generar el cliente de Prisma
+        run: npx prisma generate
+
+      - name: Aplicar migraciones
+        run: npx prisma migrate deploy
+
+      - name: Guardianes estaticos de los invariantes 1, 4 y 7
+        run: node checks/invariantes-estaticos.js
+
+      - name: Verificar que existen las doce pruebas de invariantes
+        run: node checks/verificar-pruebas-invariantes.js
+
+      - name: Pruebas automaticas
+        run: node --test --test-reporter=spec tests/

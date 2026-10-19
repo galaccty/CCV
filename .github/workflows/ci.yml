@@ -62,10 +62,14 @@ jobs:
         run: npx prisma migrate deploy
 
       - name: Guardianes estaticos de los invariantes 1, 4 y 7
-        run: node checks/invariantes-estaticos.js
+        run: npm run check:invariantes
 
       - name: Verificar que existen las doce pruebas de invariantes
-        run: node checks/verificar-pruebas-invariantes.js
+        run: npm run check:pruebas
 
       - name: Pruebas automaticas
-        run: node --test --test-reporter=spec tests/
+        # Se llama al script de npm y no al comando directo a proposito:
+        # la forma de invocar el runner de pruebas queda definida en un solo
+        # lugar. Con `node --test tests/` (la forma de directorio) Node no
+        # encuentra los archivos: hay que pasar el patron con glob.
+        run: npm test

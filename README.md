@@ -17,7 +17,7 @@ Ese archivo manda sobre cualquier otra cosa.
 |---|---|
 | Node.js 20.11 o superior | Instalada (v24.21.0) |
 | PostgreSQL 16.10 | **Instalada** en `C:\Users\anturi\pgsql` |
-| Git | **Todavía no la tenés** |
+| Git 2.55.0 | **Instalada** en `C:\Users\anturi\git` |
 
 ### Sobre PostgreSQL
 
@@ -46,7 +46,7 @@ Si preferís una base en la nube (Supabase o Neon dan una gratis), poné esa
 
 ### Sobre Git
 
-No lo tenés instalado. Está en la sección [10. Git](#10-git).
+Instalada. Está en la sección [10. Git](#10-git).
 
 ---
 
@@ -342,18 +342,16 @@ de la comisión y los plazos.
 
 ## 10. Git
 
-**No tenés Git instalado.** Instalalo desde
-[git-scm.com/download/win](https://git-scm.com/download/win) y después:
+**Ya está instalado.** Es MinGit 2.55.0 en `C:\Users\anturi\git`, agregado al
+PATH de tu usuario. La diferencia con el instalador completo es que no incluye
+la terminal Git Bash, pero todos los comandos (`git init`, `add`, `commit`,
+`branch`, `push`, `pull`, `log`, `diff`) funcionan igual desde PowerShell.
 
-```bash
-git init
-git add .
-git commit -m "Etapa 1: base del backend"
-git branch -M main
-git checkout -b dev
-```
+El repositorio ya está inicializado, con las ramas `main` y `dev` y la Etapa 1
+commiteada. Estás en `dev`, que es la rama de trabajo (la especificación dice
+que `dev` es el borrador y `main` la producción).
 
-Después configurá el remoto cuando tengas el repositorio en GitHub:
+### Cuando tengas el repositorio en GitHub
 
 ```bash
 git remote add origin https://github.com/TU_USUARIO/TU_REPO.git
@@ -361,5 +359,34 @@ git push -u origin main
 git push -u origin dev
 ```
 
-`.env` y `node_modules` ya están en `.gitignore`. Verificá con
-`git status` antes del primer commit: `.env` **no** debe aparecer.
+### El flujo de trabajo
+
+```bash
+git status              # qué cambió
+git add .               # preparar todo
+git commit -m "qué hice"  # guardar
+git push                # subir la rama actual
+```
+
+Cuando `dev` esté listo y probado, se mezcla en `main`:
+
+```bash
+git checkout main
+git merge dev
+git push
+```
+
+`.env`, `node_modules` y `generated/` ya están en `.gitignore`. Para
+confirmarlo cuando quieras:
+
+```bash
+git check-ignore -v .env
+```
+
+Y antes de commitear, un vistazo rápido:
+
+```bash
+git status
+```
+
+Si `.env` apareciera en la lista, algo se rompió en el `.gitignore`.

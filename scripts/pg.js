@@ -32,7 +32,19 @@ if (!PGBIN || !PGDATA) {
 }
 
 const ejecutable = path.join(PGBIN, process.platform === 'win32' ? 'pg_ctl.exe' : 'pg_ctl');
-const logServidor = path.join(PGDATA, 'server.log');
+
+/**
+ * El log va FUERA de la carpeta de datos, a proposito.
+ *
+ * Si esta dentro, abrirlo (por ejemplo con Get-Content para ver que pasa)
+ * le bloquea el archivo a PostgreSQL por el bloqueo de archivos de Windows,
+ * y el servidor se queda reintentando abrir su propio log hasta que se traba
+ * en "the database system is starting up". Es un susto dificil de entender
+ * si no se sabe que paso.
+ */
+const logServidor =
+  process.env.PGLOG?.replace(/\\/g, '/') ||
+  `${PGDATA.replace(/\/$/, '')}-server.log`;
 
 /**
  * Corre pg_ctl y espera.

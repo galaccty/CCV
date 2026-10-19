@@ -31,8 +31,17 @@ npm run db:iniciar    # arrancarla
 npm run db:parar      # pararla
 ```
 
-Las rutas están en `PGBIN` y `PGDATA`, dentro del `.env`. Si algún día movés
-la instalación, cambias esas dos líneas y nada más.
+Las rutas están en `PGBIN`, `PGDATA` y `PGLOG`, dentro del `.env`. Si algún día
+movés la instalación, cambias esas líneas y nada más.
+
+> **El log está fuera de la carpeta de datos a propósito.** Si estuviera dentro,
+> abrirlo para ver qué pasa le bloquearía el archivo al servidor por el bloqueo
+> de archivos de Windows, y PostgreSQL se quedaría trabado en
+> "the database system is starting up". El log está en
+> `C:\Users\anturi\pgdata-server.log`.
+
+> Si alguna vez la base queda trabada en "starting up", es casi siempre eso.
+> `npm run db:parar`, esperá un momento y `npm run db:iniciar`.
 
 Hay dos bases:
 

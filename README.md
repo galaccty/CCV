@@ -2,7 +2,12 @@
 
 Backend del marketplace multi-vendedor. Node.js + Express + PostgreSQL.
 
-**Estado: Etapa 2 (corte vertical) implementada y verificada en modo de pruebas.**
+**Estado: Etapa 3 (backend) implementada y verificada en modo de pruebas.**
+Incluye el corte vertical de la Etapa 2 y, encima, rubros/categorías globales,
+varios locales por vendedor, variantes, catálogo público, carrito multi-local,
+ajuste de stock por diferencia, envío por distancia y pedido mínimo por local.
+El frontend de la Etapa 3 se hará en otro repositorio.
+
 El proveedor de Wompi es falso por defecto: no hace llamadas HTTP y permite
 probar checkout, pago, webhook, stock y ledger completos. La integración real
 espera las llaves de sandbox. Mientras tanto, si un pago real no puede
@@ -151,8 +156,8 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 npm run db:migrate
 ```
 
-Aplica `prisma/migrations/20261018000000_etapa1_inicial/migration.sql`, que crea
-las cinco tablas de la Etapa 1.
+Aplica todas las migraciones en orden, desde las cinco tablas de la Etapa 1
+hasta el carrito y los índices de catálogo de la Etapa 3.
 
 > **Regla del proyecto:** una migración ya aplicada nunca se edita. Si algo está
 > mal, se agrega una migración nueva. Para desarrollo, `npm run db:dev` te
@@ -164,9 +169,13 @@ las cinco tablas de la Etapa 1.
 npm run seed
 ```
 
-Carga las once claves de la tabla `configuracion` con **valores de ejemplo**.
-Vas a ver la lista al terminar. Los cambias cuando tengas los números reales
-de Wompi y la respuesta del abogado.
+Carga las once claves de la tabla `configuracion` con **valores de ejemplo** y
+la taxonomía inicial de la Etapa 3: 8 rubros y 16 categorías globales (raíces e
+hijas). Los rubros son Ropa y accesorios, Calzado, Tecnología, Comida y bebidas,
+Perfumería y belleza, Hogar, Arte y manualidades y Mascotas. Vas a ver la lista
+al terminar. Los valores de configuración se cambian
+cuando tengas los números reales de Wompi y la respuesta del abogado. La semilla
+es idempotente: se puede volver a correr sin duplicar filas.
 
 ### Paso 6 — Crear el primer administrador
 
@@ -274,9 +283,44 @@ Cuando exista el frontend, esto lo resuelve la librería de peticiones.
 | `npm run db:studio` | Abre el panel visual de la base de datos |
 | `npm run db:reset` | **Borra** la base y la vuelve a crear. Cuidado. |
 | `npm run db:test:reset` | Lo mismo, pero sobre la base de pruebas |
-| `npm run seed` | Carga la configuración inicial |
+| `npm run seed` | Carga la configuración y la taxonomía inicial |
 | `npm run crear-admin` | Crea o actualiza el administrador del `.env` |
 | `npm run probar-registro` | Hace un registro completo de punta a punta |
+
+### 5.1 Rutas de la Etapa 3
+
+Todas van bajo `/api/v1`. El contrato completo está en `openapi.yaml`.
+
+| Método | Ruta | Quién |
+|---|---|---|
+| GET | `/rubros` | público |
+| GET | `/categorias-globales?rubro_id=&padre_id=` | público |
+| GET | `/locales?rubro_id=&categoria_global_id=&pagina=&por_pagina=` | público |
+| GET | `/locales/{id}` | público |
+| GET | `/locales/{id}/productos?categoria_global_id=&subcategoria_local_id=` | público |
+| GET | `/carrito` | comprador con sesión |
+| DELETE | `/carrito` | comprador con sesión |
+| PUT | `/carrito/items/{variante_id}` | comprador con sesión |
+| DELETE | `/carrito/items/{variante_id}` | comprador con sesión |
+| GET / POST | `/vendedor/locales` | vendedor |
+| PATCH | `/vendedor/locales/{id}` | vendedor dueño |
+| POST | `/vendedor/locales/{id}/subcategorias` | vendedor dueño |
+| PATCH | `/vendedor/subcategorias/{id}` | vendedor dueño |
+| GET / POST | `/vendedor/productos` | vendedor |
+| PATCH | `/vendedor/productos/{id}` | vendedor dueño |
+| POST | `/vendedor/productos/{id}/variantes` | vendedor dueño |
+| PATCH | `/vendedor/variantes/{id}` | vendedor dueño |
+| PATCH | `/vendedor/variantes/{id}/stock` | vendedor dueño |
+| GET | `/admin/locales?estado=` | admin |
+| PATCH | `/admin/locales/{id}/estado` | admin |
+| POST | `/admin/rubros` | admin |
+| PATCH | `/admin/rubros/{id}` | admin |
+| POST | `/admin/categorias-globales` | admin |
+| PATCH | `/admin/categorias-globales/{id}` | admin |
+
+El checkout sigue siendo `POST /pedidos`: agrupa los ítems por local, crea un
+`sub_pedido` por local y un solo pago por el total. El mínimo se valida contra
+el subtotal de productos de cada local, sin envío.
 
 ---
 
@@ -298,7 +342,7 @@ backend/
 │   ├── services/              la lógica de negocio
 │   └── jobs/                  registro de tareas programadas
 ├── scripts/
-│   ├── seed.js                configuración inicial
+│   ├── seed.js                configuración y taxonomía inicial
 │   └── crear-admin.js         primer administrador
 ├── checks/                    guardianes de invariantes que corren en CI
 ├── tests/
@@ -318,9 +362,9 @@ Las decisiones que importan:
   cookie pero no invalida el token hasta que expira. Si más adelante querés
   revocación inmediata, se agrega una tabla `sesion` en una migración nueva.
 - **El proveedor de correo es intercambiable** detrás de una interfaz.
-- **Los guardianes de CI ya están instalados**, aunque las tablas que protegen
-  todavía no existan. Fue a propósito: llegaron antes de que hubiera código que
-  pudiera romperlos.
+- **Los guardianes de CI protegen el ledger, el stock y Wompi**, además de las
+  pruebas de invariantes. Se ejecutan antes de la suite completa y bloquean el
+  merge si aparece una escritura por fuera de los módulos autorizados.
 
 ---
 
@@ -329,7 +373,7 @@ Las decisiones que importan:
 La sección 10 de la especificación define doce invariantes. Cada uno tiene un
 archivo de prueba en `tests/invariantes/`.
 
-**Estado en la Etapa 2:**
+**Estado en la Etapa 3:**
 
 | # | Invariante | Estado |
 |---|---|---|
@@ -339,12 +383,12 @@ archivo de prueba en `tests/invariantes/`.
 | 4 | Wompi nunca dentro de una transacción | activo (3 capas) |
 | 5 | Los snapshots no se modifican | activo (triggers de la Etapa 2) |
 | 6 | Entregado ≠ dinero movido | parcial (reembolso pendiente bloquea elegibilidad y trigger; faltan job y disputas de la Etapa 4) |
-| 7 | Stock solo por el módulo de stock | activo (módulo único + concurrencia) |
+| 7 | Stock solo por el módulo de stock | activo (módulo único, concurrencia, stock inicial y ajuste por diferencia) |
 | 8 | La deuda se compensa solo en liquidación | pendiente, Etapa 4 |
 | 9 | El estado del local solo lo cambia `recalcular_estado_local` | pendiente, Etapa 4 |
 | 10 | Idempotency-Key en los POST que crean | activo (pedido y pago) |
-| 11 | Nada financiero se borra | parcial (cuenta_local incluida; faltan productos y retención) |
-| 12 | Los montos se calculan en el backend | activo (checkout) |
+| 11 | Nada financiero se borra | parcial (productos se desactivan; falta la retención de la Etapa 6) |
+| 12 | Los montos se calculan en el backend | activo (checkout, incluso con varios locales) |
 
 "pendiente" no es "borrado": cada archivo tiene el motivo y la etapa escritos en
 el comentario, y `tests/invariantes/indice.test.js` falla si alguien borra
@@ -361,20 +405,20 @@ alguno.
 Las pruebas corren contra la base real (`ccv_test`), no contra simulacros.
 
 `npm run verificar` (guardianes + cobertura de pruebas + tests) da así al
-terminar la Etapa 2:
+terminar la Etapa 3:
 
 ```
 Invariantes estaticos: OK (1, 4 y 7 sin violaciones).
-tests 171 · pass 158 · fail 0 · skipped 13
+tests 196 · pass 184 · fail 0 · skipped 12
 ```
 
-Las 13 que se saltan son **todas invariantes que todavía no aplican**, y cada
+Las 12 que se saltan son **todas invariantes que todavía no aplican**, y cada
 una dice en pantalla por qué y en qué etapa se activa:
 
 - 3 del invariante 6 (el job y las disputas llegan en la Etapa 4).
 - 4 del invariante 8 (liquidaciones de la Etapa 4).
 - 4 del invariante 9 (máquina de estados del local, Etapa 4).
-- 2 del invariante 11 (desactivar productos y retención, Etapas 3 y 6).
+- 1 del invariante 11 (retención de datos, Etapa 6).
 
 Cero se saltan por falta de base. `pretest` **recrea** `ccv_test` desde cero,
 aplica todas las migraciones y siembra la configuración base. No se usa
@@ -388,17 +432,18 @@ explica cómo levantarlo (`npm run db:iniciar`). Solo se saltan si se define
 
 ## 9. Qué falta
 
-La Etapa 2 quedó implementada con el **proveedor Wompi falso**. Todavía no está
-hecho, a propósito:
+La Etapa 3 quedó implementada en el backend con el **proveedor Wompi falso**.
+Todavía no está hecho, a propósito:
 
+- **Frontend de la Etapa 3:** va en otro repositorio. Este backend ya expone el
+  contrato y las rutas que necesita.
 - **Wompi real:** cargar `WOMPI_PUB_KEY`, `WOMPI_PRV_KEY`, `WOMPI_EVENTS_KEY` y
   `WOMPI_INTEGRITY_KEY`, poner `WOMPI_PROVEEDOR="real"` y probar el sandbox.
   La API de Reembolsos V2 (`POST /v1/refunds`) ya está identificada en la
   documentación, pero no se integra hasta confirmar su contrato y los métodos de
   pago cubiertos. Por eso, en modo real, la transacción B deja el reembolso en
   `pendiente` y alerta al admin; no marca dinero devuelto sin que haya salido.
-- **Etapa 3:** locales, productos, variantes, categorías, búsqueda y checkout
-  multi-local.
+- **Búsqueda full-text** y home dinámica: Etapa 5.
 - **Etapa 4:** efectivo, saldos, liquidaciones, disputas, ejecución automática de
   reembolsos, paneles y liberación del saldo retenido.
 - **Etapas 5 a 7:** notificaciones, calificaciones, home dinámica, hosting.

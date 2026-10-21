@@ -1,8 +1,16 @@
 import { prisma } from '../lib/prisma.js';
 import { withTransaccion } from '../lib/transaccion.js';
-import { convertirBigIntAJson } from '../lib/dinero.js';
+import {
+  aBigInt,
+  convertirBigIntAJson,
+  sumar,
+} from '../lib/dinero.js';
 import { ErrorApi, errorNoEncontrado } from '../lib/errores.js';
 import { puedeVenderLocal } from '../domain/estados.js';
+import {
+  calcularCostoEnvio,
+  leerConfiguracionCongelada,
+} from './pedidos.js';
 
 /**
  * CARRITO MULTI-LOCAL (Etapa 3)
@@ -82,6 +90,64 @@ async function cargarCarrito(usuarioId) {
 export async function verCarrito({ usuario }) {
   const carrito = await cargarCarrito(usuario.id);
   return convertirBigIntAJson(serializarCarrito(carrito));
+}
+
+/**
+ * Cotiza el carrito guardado contra una direccion de entrega.
+ *
+ * Es una lectura pura: no crea pedido, no reserva stock y no descuenta nada.
+ * A diferencia del checkout, no falla cuando el pedido minimo no se alcanza:
+ * devuelve `cumple_pedido_minimo` y `faltante_pedido_minimo` para que el
+ * frontend pueda avisar antes de pagar.
+ */
+export async function cotizarCarrito({ usuario, direccion }) {
+  const carrito = await cargarCarrito(usuario.id);
+  const snapshot = await leerConfiguracionCongelada();
+  const pedidoMinimo = aBigInt(snapshot.pedido_minimo, 'pedido_minimo');
+
+  const porLocal = new Map();
+
+  for (const item of carrito?.items ?? []) {
+    const local = item.variante.producto.local;
+    let grupo = porLocal.get(local.id);
+
+    if (!grupo) {
+      grupo = { local, subtotal: 0n };
+      porLocal.set(local.id, grupo);
+    }
+
+    grupo.subtotal = sumar(
+      grupo.subtotal,
+      precioSubtotal(item.variante.precio, item.cantidad),
+    );
+  }
+
+  const locales = [...porLocal.values()].map(({ local, subtotal }) => {
+    const envio = calcularCostoEnvio({
+      latitudLocal: local.latitud,
+      longitudLocal: local.longitud,
+      latitudEntrega: direccion.latitud,
+      longitudEntrega: direccion.longitud,
+      tarifaBase: snapshot.tarifa_base_envio,
+      tarifaPorKm: snapshot.tarifa_por_km,
+    });
+    const cumple = subtotal >= pedidoMinimo;
+
+    return {
+      local_id: local.id,
+      nombre_local: local.nombre,
+      subtotal_productos: subtotal,
+      costo_envio: envio.costo,
+      pedido_minimo: pedidoMinimo,
+      cumple_pedido_minimo: cumple,
+      faltante_pedido_minimo: cumple ? 0n : pedidoMinimo - subtotal,
+      total: sumar(subtotal, envio.costo),
+    };
+  });
+
+  const total = locales.reduce((suma, local) => sumar(suma, local.total), 0n);
+
+  return convertirBigIntAJson({ locales, total });
 }
 
 async function validarVarianteDisponible(varianteId) {

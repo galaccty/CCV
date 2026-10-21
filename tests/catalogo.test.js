@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { opcionesConBase, prisma, cerrarConexion } from './helpers/base.js';
 import { cliente, crearUsuarioConSesion } from './helpers/http.js';
 import { crearCatalogo } from './helpers/datos.js';
+import { crearVariante } from '../src/services/stock.js';
 
 /**
  * CATALOGO PUBLICO, VENDEDOR Y ADMIN - ETAPA 3
@@ -138,6 +139,66 @@ describe('GET /api/v1/catalogo publico', () => {
     );
     assert.equal(productos.status, 200);
     assert.equal(productos.body.datos.length, 0);
+  });
+
+  test('detalle publico: solo variantes activas, disponibilidad y resumen del local', CON_BASE, async () => {
+    const catalogo = await crearCatalogo({ stockInicial: 4 });
+    await crearVariante(prisma, {
+      productoId: catalogo.producto.id,
+      atributos: { talla: 'S' },
+      precio: 11000n,
+      stock: 9,
+      activo: false,
+    });
+
+    const r = await cliente().get(
+      `/api/v1/productos/${catalogo.producto.id}`,
+    );
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.id, catalogo.producto.id);
+    assert.equal(r.body.local.id, catalogo.local.id);
+    assert.equal(r.body.local.nombre, catalogo.local.nombre);
+    assert.equal(r.body.local.rubro.id, catalogo.rubro.id);
+    assert.equal(r.body.variantes.length, 1);
+    assert.equal(r.body.variantes[0].id, catalogo.variante.id);
+    assert.equal(r.body.variantes[0].disponible, true);
+    assert.equal(Object.hasOwn(r.body.variantes[0], 'stock'), false);
+  });
+
+  test('detalle publico: disponible es false cuando no hay stock', CON_BASE, async () => {
+    const catalogo = await crearCatalogo({ stockInicial: 0 });
+    const r = await cliente().get(
+      `/api/v1/productos/${catalogo.producto.id}`,
+    );
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.variantes.length, 1);
+    assert.equal(r.body.variantes[0].disponible, false);
+  });
+
+  test('detalle publico: nunca expone productos ni locales inactivos', CON_BASE, async () => {
+    const productoInactivo = await crearCatalogo();
+    await prisma.producto.update({
+      where: { id: productoInactivo.producto.id },
+      data: { activo: false },
+    });
+
+    const localInactivo = await crearCatalogo();
+    await prisma.local.update({
+      where: { id: localInactivo.local.id },
+      data: { estado: 'suspendido' },
+    });
+
+    const anonimo = cliente();
+    const porProducto = await anonimo.get(
+      `/api/v1/productos/${productoInactivo.producto.id}`,
+    );
+    const porLocal = await anonimo.get(
+      `/api/v1/productos/${localInactivo.producto.id}`,
+    );
+
+    assert.equal(porProducto.status, 404);
+    assert.equal(porLocal.status, 404);
   });
 });
 

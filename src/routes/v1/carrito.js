@@ -1,12 +1,17 @@
 import { Router } from 'express';
 import * as carrito from '../../services/carrito.js';
 import { requiereSesion } from '../../middlewares/sesion.js';
-import { esquemaIdPositivo, esquemaItemCarrito } from '../../lib/validacion.js';
+import {
+  esquemaCotizarCarrito,
+  esquemaIdPositivo,
+  esquemaItemCarrito,
+} from '../../lib/validacion.js';
 
 /**
  * CARRITO - Etapa 3
  * =================
  * GET    /api/v1/carrito
+ * POST   /api/v1/carrito/cotizar
  * DELETE /api/v1/carrito
  * PUT    /api/v1/carrito/items/{variante_id}
  * DELETE /api/v1/carrito/items/{variante_id}
@@ -19,6 +24,11 @@ router.use(requiereSesion);
 
 router.get('/', async (req, res) => {
   res.json(await carrito.verCarrito({ usuario: req.usuario }));
+});
+
+router.post('/cotizar', async (req, res) => {
+  const { direccion } = esquemaCotizarCarrito.parse(req.body);
+  res.json(await carrito.cotizarCarrito({ usuario: req.usuario, direccion }));
 });
 
 router.delete('/', async (req, res) => {

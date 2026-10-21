@@ -60,6 +60,46 @@ export function serializarProducto(producto) {
   };
 }
 
+export function serializarVariantePublica(variante) {
+  return {
+    id: variante.id,
+    producto_id: variante.productoId,
+    atributos: variante.atributos,
+    precio: variante.precio,
+    // El inventario exacto no se expone en el detalle publico: solo si hay
+    // unidades disponibles o no.
+    disponible: variante.stock > 0,
+  };
+}
+
+export function serializarLocalResumen(local) {
+  return {
+    id: local.id,
+    nombre: local.nombre,
+    logo_url: local.logoUrl,
+    banner_fondo_url: local.bannerFondoUrl,
+    promedio_calificacion: local.promedioCalificacion,
+    total_calificaciones: local.totalCalificaciones,
+    ...(local.rubro ? { rubro: serializarRubro(local.rubro) } : {}),
+  };
+}
+
+export function serializarProductoPublico(producto) {
+  return {
+    id: producto.id,
+    local_id: producto.localId,
+    categoria_global_id: producto.categoriaGlobalId,
+    subcategoria_local_id: producto.subcategoriaLocalId,
+    nombre: producto.nombre,
+    descripcion: producto.descripcion,
+    fotos: producto.fotos,
+    atributos: producto.atributos,
+    creado_en: producto.creadoEn,
+    local: serializarLocalResumen(producto.local),
+    variantes: (producto.variantes ?? []).map(serializarVariantePublica),
+  };
+}
+
 export function serializarLocal(local) {
   return {
     id: local.id,
@@ -200,4 +240,25 @@ export async function listarProductosDeLocal({
       total,
     ),
   );
+}
+
+export async function obtenerProducto({ id }) {
+  const producto = await prisma.producto.findFirst({
+    where: {
+      id,
+      activo: true,
+      local: { estado: { in: [...ESTADOS_LOCAL_VENTA] } },
+    },
+    include: {
+      local: { include: { rubro: true } },
+      variantes: {
+        where: { activo: true },
+        orderBy: { id: 'asc' },
+      },
+    },
+  });
+
+  if (!producto) throw errorNoEncontrado('Producto no encontrado.');
+
+  return convertirBigIntAJson(serializarProductoPublico(producto));
 }

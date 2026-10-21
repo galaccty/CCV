@@ -156,3 +156,127 @@ describe('carrito', () => {
     );
   });
 });
+
+describe('POST /api/v1/carrito/cotizar', () => {
+  const direccion = {
+    texto: 'Calle 1 # 2-3, Bogota',
+    latitud: 4.65,
+    longitud: -74.05,
+  };
+
+  test('exige sesion', CON_BASE, async () => {
+    const r = await cliente().post('/api/v1/carrito/cotizar', {
+      direccion,
+    });
+    assert.equal(r.status, 401);
+  });
+
+  test('calcula por local subtotal, envio, minimo y total sin crear pedido ni tocar stock', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const uno = await crearCatalogo({ precio: 20000n, stockInicial: 5 });
+    const dos = await crearCatalogo({ precio: 30000n, stockInicial: 5 });
+
+    await comprador.cliente.put(
+      `/api/v1/carrito/items/${uno.variante.id}`,
+      { cantidad: 2 },
+    );
+    await comprador.cliente.put(
+      `/api/v1/carrito/items/${dos.variante.id}`,
+      { cantidad: 1 },
+    );
+
+    const pedidosAntes = await prisma.pedido.count({
+      where: { usuarioId: comprador.id },
+    });
+    const stockAntes = await prisma.productoVariante.findMany({
+      where: { id: { in: [uno.variante.id, dos.variante.id] } },
+      select: { id: true, stock: true },
+    });
+
+    const r = await comprador.cliente.post('/api/v1/carrito/cotizar', {
+      direccion,
+      subtotal_productos: 1,
+      total: 1,
+      locales: [{ local_id: 999, total: 1 }],
+    });
+
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.locales.length, 2);
+
+    const localUno = r.body.locales.find((l) => l.local_id === uno.local.id);
+    const localDos = r.body.locales.find((l) => l.local_id === dos.local.id);
+    assert.deepEqual(
+      {
+        subtotal: localUno.subtotal_productos,
+        envio: localUno.costo_envio,
+        minimo: localUno.pedido_minimo,
+        cumple: localUno.cumple_pedido_minimo,
+        faltante: localUno.faltante_pedido_minimo,
+        total: localUno.total,
+      },
+      {
+        subtotal: 40000,
+        envio: 2000,
+        minimo: 30000,
+        cumple: true,
+        faltante: 0,
+        total: 42000,
+      },
+    );
+    assert.equal(localDos.subtotal_productos, 30000);
+    assert.equal(localDos.cumple_pedido_minimo, true);
+    assert.equal(localDos.total, 32000);
+    assert.equal(r.body.total, 74000);
+
+    const pedidosDespues = await prisma.pedido.count({
+      where: { usuarioId: comprador.id },
+    });
+    const stockDespues = await prisma.productoVariante.findMany({
+      where: { id: { in: [uno.variante.id, dos.variante.id] } },
+      select: { id: true, stock: true },
+    });
+
+    assert.equal(pedidosDespues, pedidosAntes);
+    assert.deepEqual(stockDespues, stockAntes);
+  });
+
+  test('informa cuando no se alcanza el pedido minimo', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const catalogo = await crearCatalogo({ precio: 10000n, stockInicial: 5 });
+    await comprador.cliente.put(
+      `/api/v1/carrito/items/${catalogo.variante.id}`,
+      { cantidad: 1 },
+    );
+
+    const r = await comprador.cliente.post('/api/v1/carrito/cotizar', {
+      direccion,
+    });
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.locales.length, 1);
+    assert.equal(r.body.locales[0].subtotal_productos, 10000);
+    assert.equal(r.body.locales[0].cumple_pedido_minimo, false);
+    assert.equal(r.body.locales[0].faltante_pedido_minimo, 20000);
+    assert.equal(r.body.locales[0].total, 12000);
+  });
+
+  test('un carrito vacio devuelve una cotizacion vacia', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const r = await comprador.cliente.post('/api/v1/carrito/cotizar', {
+      direccion,
+    });
+
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { locales: [], total: 0 });
+  });
+
+  test('valida que la direccion este dentro del rango de Colombia', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const r = await comprador.cliente.post('/api/v1/carrito/cotizar', {
+      direccion: { ...direccion, latitud: 20 },
+    });
+
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error.codigo, 'validacion_invalida');
+  });
+});

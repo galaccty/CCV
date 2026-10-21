@@ -16,6 +16,7 @@ import {
  * GET /api/v1/locales
  * GET /api/v1/locales/{id}
  * GET /api/v1/locales/{id}/productos
+ * GET /api/v1/productos/{id}
  *
  * No exigen sesion. Solo muestran locales que pueden vender.
  */
@@ -74,6 +75,11 @@ router.get('/locales/:id/productos', async (req, res) => {
       porPagina,
     }),
   );
+});
+
+router.get('/productos/:id', async (req, res) => {
+  const id = esquemaIdPositivo.parse(req.params.id);
+  res.json(await catalogo.obtenerProducto({ id }));
 });
 
 export default router;

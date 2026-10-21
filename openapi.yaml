@@ -199,6 +199,11 @@ paths:
                   resultado:
                     type: string
                     enum: [ok, ignorado, referencia_desconocida]
+                  reembolso:
+                    type: boolean
+                    description: |
+                      true cuando la confirmacion no pudo descontar stock y se
+                      registro el reembolso automatico (transaccion B).
         '401':
           description: Firma inválida
           content:

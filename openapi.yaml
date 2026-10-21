@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Centro Comercial Virtual - API
-  version: 0.2.0
+  version: 0.3.0
   description: |
     Contrato de la API del backend. Es la fuente de verdad: las rutas se
     implementan después de quedar documentadas aquí.
@@ -13,19 +13,23 @@ info:
     - Los POST que crean pedido o pago exigen `Idempotency-Key`.
     - Los POST con sesión exigen `X-CSRF-Token` (cookie doble).
 
-    Etapa 2: corte vertical con un local, un producto, un pedido, un pago y
-    un cambio de estado. El proveedor de pagos corre en modo `fake` hasta que
-    existan las llaves de sandbox.
+    Etapa 3: catálogo multi-local, rubros y categorías globales, variantes,
+    carrito multi-local, envío por distancia y pedido mínimo por local. El
+    proveedor de pagos corre en modo `fake` hasta que existan las llaves de
+    sandbox.
 
 servers:
   - url: http://localhost:3000
     description: Desarrollo local
 
 tags:
+  - name: Catálogo
+  - name: Carrito
   - name: Pedidos
   - name: Pagos
   - name: Sub-pedidos
   - name: Vendedor
+  - name: Admin
 
 security:
   - cookieSesion: []
@@ -77,8 +81,9 @@ paths:
                   mensaje: Ya hay una solicitud con esa clave en proceso.
         '422':
           description: >
-            Regla de negocio: stock insuficiente, pedido mínimo no alcanzado,
-            local no activo o pedido con varios locales (Etapa 3).
+            Regla de negocio: stock insuficiente, pedido mínimo no alcanzado
+            en alguno de los locales, local que no puede vender o variante
+            inactiva.
           content:
             application/json:
               schema:
@@ -335,6 +340,751 @@ paths:
         '409':
           $ref: '#/components/responses/Error'
 
+  /api/v1/rubros:
+    get:
+      tags: [Catálogo]
+      summary: Listar los rubros globales
+      operationId: listarRubros
+      security: []
+      responses:
+        '200':
+          description: Rubros disponibles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaRubros'
+
+  /api/v1/categorias-globales:
+    get:
+      tags: [Catálogo]
+      summary: Listar el árbol de categorías globales
+      operationId: listarCategoriasGlobales
+      security: []
+      parameters:
+        - name: rubro_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: padre_id
+          in: query
+          required: false
+          description: Si se envía, devuelve solo las hijas de esa categoría.
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Categorías globales
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaCategoriasGlobales'
+        '400':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/locales:
+    get:
+      tags: [Catálogo]
+      summary: Listar locales que pueden vender
+      description: |
+        Solo devuelve locales en estado `activo` o `en_plazo`. Los locales
+        bloqueados, suspendidos o pendientes de aprobación no aparecen.
+      operationId: listarLocales
+      security: []
+      parameters:
+        - name: rubro_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: categoria_global_id
+          in: query
+          required: false
+          description: Locales con al menos un producto activo de esa categoría.
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Lista paginada de locales
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaLocales'
+        '400':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/locales/{id}:
+    get:
+      tags: [Catálogo]
+      summary: Ver un local con su catálogo activo
+      operationId: verLocal
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocal'
+      responses:
+        '200':
+          description: Local, subcategorías, productos y variantes activas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Local'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/locales/{id}/productos:
+    get:
+      tags: [Catálogo]
+      summary: Listar los productos activos de un local
+      operationId: listarProductosDeLocal
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocal'
+        - name: categoria_global_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: subcategoria_local_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Lista paginada de productos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaProductos'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/carrito:
+    get:
+      tags: [Carrito]
+      summary: Ver el carrito del usuario
+      description: |
+        Si el usuario todavía no tiene carrito, devuelve uno vacío. No crea
+        filas en la base al leer.
+      operationId: verCarrito
+      security:
+        - cookieSesion: []
+      responses:
+        '200':
+          description: Carrito actual
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Carrito'
+        '401':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [Carrito]
+      summary: Vaciar el carrito
+      operationId: vaciarCarrito
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Carrito vacío
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/carrito/items/{variante_id}:
+    put:
+      tags: [Carrito]
+      summary: Agregar o cambiar la cantidad de una variante
+      description: |
+        La cantidad es absoluta: reemplaza la que hubiera para esa variante.
+        El carrito es multi-local; el checkout agrupa por local.
+      operationId: fijarItemCarrito
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdVariante'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarritoItemRequest'
+      responses:
+        '200':
+          description: Carrito actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Carrito'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '422':
+          description: Variante o local no disponible
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [Carrito]
+      summary: Quitar una variante del carrito
+      operationId: quitarItemCarrito
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdVariante'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Ítem eliminado
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/locales:
+    get:
+      tags: [Vendedor]
+      summary: Listar los locales del vendedor
+      operationId: listarLocalesVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Lista paginada de locales propios
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaLocales'
+        '403':
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [Vendedor]
+      summary: Crear un local
+      description: Todo local nuevo nace en `pendiente_aprobacion`.
+      operationId: crearLocal
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearLocalRequest'
+      responses:
+        '201':
+          description: Local creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Local'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/locales/{id}:
+    patch:
+      tags: [Vendedor]
+      summary: Actualizar un local propio
+      operationId: actualizarLocal
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocal'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActualizarLocalRequest'
+      responses:
+        '200':
+          description: Local actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Local'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '422':
+          description: Cambio de rubro incompatible con productos existentes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/vendedor/locales/{id}/subcategorias:
+    post:
+      tags: [Vendedor]
+      summary: Crear una subcategoría libre de un local
+      operationId: crearSubcategoriaLocal
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocal'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearSubcategoriaRequest'
+      responses:
+        '201':
+          description: Subcategoría creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubcategoriaLocal'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/subcategorias/{id}:
+    patch:
+      tags: [Vendedor]
+      summary: Renombrar una subcategoría propia
+      operationId: actualizarSubcategoriaLocal
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActualizarSubcategoriaRequest'
+      responses:
+        '200':
+          description: Subcategoría actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubcategoriaLocal'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/productos:
+    get:
+      tags: [Vendedor]
+      summary: Listar los productos del vendedor
+      operationId: listarProductosVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: local_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Lista paginada de productos propios
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaProductos'
+        '403':
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [Vendedor]
+      summary: Crear un producto con su variante inicial
+      description: |
+        El stock inicial se escribe por el módulo de stock. Un producto simple
+        tiene una sola variante. El producto y sus variantes se crean en una
+        sola transacción.
+      operationId: crearProducto
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearProductoRequest'
+      responses:
+        '201':
+          description: Producto creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Producto'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/productos/{id}:
+    patch:
+      tags: [Vendedor]
+      summary: Actualizar o desactivar un producto propio
+      operationId: actualizarProducto
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdProducto'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActualizarProductoRequest'
+      responses:
+        '200':
+          description: Producto actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Producto'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/productos/{id}/variantes:
+    post:
+      tags: [Vendedor]
+      summary: Agregar una variante a un producto propio
+      operationId: crearVariante
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdProducto'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearVarianteRequest'
+      responses:
+        '201':
+          description: Variante creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Variante'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/variantes/{id}:
+    patch:
+      tags: [Vendedor]
+      summary: Actualizar precio, atributos o estado de una variante
+      description: El stock no se cambia aquí; usa el endpoint de ajuste.
+      operationId: actualizarVariante
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdVarianteVendedor'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActualizarVarianteRequest'
+      responses:
+        '200':
+          description: Variante actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Variante'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/variantes/{id}/stock:
+    patch:
+      tags: [Vendedor]
+      summary: Ajustar el stock de una variante por diferencia
+      description: |
+        `diferencia` puede ser positiva o negativa. Se aplica con un único
+        `UPDATE ... WHERE stock + diferencia >= 0`; si el resultado quedaría
+        negativo, responde 422 y no cambia nada.
+      operationId: ajustarStockVariante
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdVarianteVendedor'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AjusteStockRequest'
+      responses:
+        '200':
+          description: Variante con el stock actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Variante'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '422':
+          description: El ajuste dejaría el stock negativo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/admin/locales:
+    get:
+      tags: [Admin]
+      summary: Listar todos los locales
+      operationId: listarLocalesAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoLocal'
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Lista paginada de locales
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaLocales'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/locales/{id}/estado:
+    patch:
+      tags: [Admin]
+      summary: Aprobar, suspender o reactivar un local
+      description: |
+        Solo permite `activo` y `suspendido`. No se puede fijar `en_plazo` ni
+        `bloqueado`: esos estados los maneja el sistema por deuda. Un local
+        `en_plazo` puede suspenderse, pero no reactivarse por panel mientras
+        tenga deuda; un local `bloqueado` solo lo libera el sistema. Cada
+        cambio queda en `auditoria_admin`.
+      operationId: cambiarEstadoLocal
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocal'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CambiarEstadoLocalRequest'
+      responses:
+        '200':
+          description: Local actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Local'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: Transición de estado no permitida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/admin/rubros:
+    post:
+      tags: [Admin]
+      summary: Crear un rubro
+      operationId: crearRubro
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearRubroRequest'
+      responses:
+        '201':
+          description: Rubro creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rubro'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/rubros/{id}:
+    patch:
+      tags: [Admin]
+      summary: Renombrar un rubro
+      operationId: actualizarRubro
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActualizarRubroRequest'
+      responses:
+        '200':
+          description: Rubro actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rubro'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/categorias-globales:
+    post:
+      tags: [Admin]
+      summary: Crear una categoría global
+      operationId: crearCategoriaGlobal
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearCategoriaGlobalRequest'
+      responses:
+        '201':
+          description: Categoría creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoriaGlobal'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/categorias-globales/{id}:
+    patch:
+      tags: [Admin]
+      summary: Actualizar una categoría global
+      operationId: actualizarCategoriaGlobal
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActualizarCategoriaGlobalRequest'
+      responses:
+        '200':
+          description: Categoría actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoriaGlobal'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '422':
+          description: El padre no existe o se formaría un ciclo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
 components:
   securitySchemes:
     cookieSesion:
@@ -383,6 +1133,30 @@ components:
       schema:
         type: integer
     IdSubPedido:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    IdLocal:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    IdProducto:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    IdVariante:
+      name: variante_id
+      in: path
+      required: true
+      schema:
+        type: integer
+    IdVarianteVendedor:
       name: id
       in: path
       required: true
@@ -472,9 +1246,481 @@ components:
                 minimum: 1
                 maximum: 999
           description: >
-            Todos los ítems deben ser del mismo local (Etapa 2). Cualquier
+            Los ítems pueden ser de varios locales. El backend los agrupa en
+            sub-pedidos, calcula envío y comisión por local y aplica
+            `pedido_minimo` al subtotal de productos de cada local. Cualquier
             monto enviado por el cliente se ignora: los precios salen de la
             base de datos.
+
+    EstadoLocal:
+      type: string
+      enum: [pendiente_aprobacion, activo, en_plazo, bloqueado, suspendido]
+
+    Rubro:
+      type: object
+      required: [id, nombre]
+      properties:
+        id:
+          type: integer
+        nombre:
+          type: string
+
+    ListaRubros:
+      type: object
+      required: [datos]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rubro'
+
+    CategoriaGlobal:
+      type: object
+      required: [id, nombre]
+      properties:
+        id:
+          type: integer
+        nombre:
+          type: string
+        padre_id:
+          type: integer
+          nullable: true
+        rubro_id:
+          type: integer
+          nullable: true
+
+    ListaCategoriasGlobales:
+      type: object
+      required: [datos]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/CategoriaGlobal'
+
+    SubcategoriaLocal:
+      type: object
+      required: [id, local_id, nombre]
+      properties:
+        id:
+          type: integer
+        local_id:
+          type: integer
+        nombre:
+          type: string
+
+    Variante:
+      type: object
+      required: [id, producto_id, precio, stock, activo]
+      properties:
+        id:
+          type: integer
+        producto_id:
+          type: integer
+        atributos:
+          type: object
+          additionalProperties: true
+          nullable: true
+        precio:
+          type: integer
+          description: Pesos.
+        stock:
+          type: integer
+        activo:
+          type: boolean
+
+    Producto:
+      type: object
+      required: [id, local_id, categoria_global_id, nombre, activo, variantes]
+      properties:
+        id:
+          type: integer
+        local_id:
+          type: integer
+        categoria_global_id:
+          type: integer
+        subcategoria_local_id:
+          type: integer
+          nullable: true
+        nombre:
+          type: string
+        descripcion:
+          type: string
+          nullable: true
+        fotos:
+          type: array
+          items:
+            type: string
+          nullable: true
+        atributos:
+          type: object
+          additionalProperties: true
+          nullable: true
+        activo:
+          type: boolean
+        creado_en:
+          type: string
+          format: date-time
+        variantes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Variante'
+
+    Local:
+      type: object
+      required: [id, usuario_id, rubro_id, nombre, latitud, longitud, estado]
+      properties:
+        id:
+          type: integer
+        usuario_id:
+          type: integer
+        rubro_id:
+          type: integer
+        nombre:
+          type: string
+        logo_url:
+          type: string
+          nullable: true
+        banner_fondo_url:
+          type: string
+          nullable: true
+        latitud:
+          type: number
+        longitud:
+          type: number
+        estado:
+          $ref: '#/components/schemas/EstadoLocal'
+        promedio_calificacion:
+          type: number
+        total_calificaciones:
+          type: integer
+        creado_en:
+          type: string
+          format: date-time
+        rubro:
+          $ref: '#/components/schemas/Rubro'
+        subcategorias:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubcategoriaLocal'
+        productos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Producto'
+
+    ListaLocales:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Local'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
+
+    ListaProductos:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Producto'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
+
+    CrearLocalRequest:
+      type: object
+      required: [rubro_id, nombre, latitud, longitud]
+      additionalProperties: false
+      properties:
+        rubro_id:
+          type: integer
+        nombre:
+          type: string
+          minLength: 2
+          maxLength: 160
+        logo_url:
+          type: string
+        banner_fondo_url:
+          type: string
+        latitud:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitud:
+          type: number
+          minimum: -180
+          maximum: 180
+
+    ActualizarLocalRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        rubro_id:
+          type: integer
+        nombre:
+          type: string
+          minLength: 2
+          maxLength: 160
+        logo_url:
+          type: string
+          nullable: true
+        banner_fondo_url:
+          type: string
+          nullable: true
+        latitud:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitud:
+          type: number
+          minimum: -180
+          maximum: 180
+
+    CrearSubcategoriaRequest:
+      type: object
+      required: [nombre]
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 120
+
+    ActualizarSubcategoriaRequest:
+      type: object
+      required: [nombre]
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 120
+
+    CrearVarianteRequest:
+      type: object
+      required: [precio]
+      additionalProperties: false
+      properties:
+        atributos:
+          type: object
+          additionalProperties: true
+          nullable: true
+        precio:
+          type: integer
+          minimum: 1
+        stock:
+          type: integer
+          minimum: 0
+          default: 0
+        activo:
+          type: boolean
+          default: true
+
+    ActualizarVarianteRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        atributos:
+          type: object
+          additionalProperties: true
+          nullable: true
+        precio:
+          type: integer
+          minimum: 1
+        activo:
+          type: boolean
+
+    CrearProductoRequest:
+      type: object
+      required: [local_id, categoria_global_id, nombre, variantes]
+      additionalProperties: false
+      properties:
+        local_id:
+          type: integer
+        categoria_global_id:
+          type: integer
+        subcategoria_local_id:
+          type: integer
+          nullable: true
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 200
+        descripcion:
+          type: string
+          nullable: true
+        fotos:
+          type: array
+          items:
+            type: string
+          maxItems: 20
+          nullable: true
+        atributos:
+          type: object
+          additionalProperties: true
+          nullable: true
+        variantes:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/CrearVarianteRequest'
+
+    ActualizarProductoRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        categoria_global_id:
+          type: integer
+        subcategoria_local_id:
+          type: integer
+          nullable: true
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 200
+        descripcion:
+          type: string
+          nullable: true
+        fotos:
+          type: array
+          items:
+            type: string
+          maxItems: 20
+          nullable: true
+        atributos:
+          type: object
+          additionalProperties: true
+          nullable: true
+        activo:
+          type: boolean
+
+    AjusteStockRequest:
+      type: object
+      required: [diferencia]
+      additionalProperties: false
+      properties:
+        diferencia:
+          type: integer
+          description: Positiva para sumar, negativa para restar. No puede ser cero.
+          not:
+            enum: [0]
+
+    CarritoItemRequest:
+      type: object
+      required: [cantidad]
+      additionalProperties: false
+      properties:
+        cantidad:
+          type: integer
+          minimum: 1
+          maximum: 999
+
+    CarritoItem:
+      type: object
+      required: [variante_id, cantidad, precio_unitario, subtotal, disponible]
+      properties:
+        id:
+          type: integer
+        variante_id:
+          type: integer
+        cantidad:
+          type: integer
+        producto_id:
+          type: integer
+        nombre_producto:
+          type: string
+        atributos:
+          type: object
+          additionalProperties: true
+          nullable: true
+        precio_unitario:
+          type: integer
+        subtotal:
+          type: integer
+        disponible:
+          type: boolean
+
+    Carrito:
+      type: object
+      required: [items, total_productos]
+      properties:
+        id:
+          type: integer
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CarritoItem'
+        total_productos:
+          type: integer
+
+    CrearRubroRequest:
+      type: object
+      required: [nombre]
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 120
+
+    ActualizarRubroRequest:
+      type: object
+      required: [nombre]
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 120
+
+    CrearCategoriaGlobalRequest:
+      type: object
+      required: [nombre]
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 120
+        padre_id:
+          type: integer
+          nullable: true
+        rubro_id:
+          type: integer
+          nullable: true
+
+    ActualizarCategoriaGlobalRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 120
+        padre_id:
+          type: integer
+          nullable: true
+        rubro_id:
+          type: integer
+          nullable: true
+
+    CambiarEstadoLocalRequest:
+      type: object
+      required: [estado]
+      additionalProperties: false
+      properties:
+        estado:
+          type: string
+          enum: [activo, suspendido]
 
     EstadoSubPedido:
       type: string

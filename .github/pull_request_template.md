@@ -17,7 +17,7 @@ Fuente: sección 10 de la especificación. CI verifica automáticamente los inva
 - [ ] 4. El pago aprobado se procesa de forma atómica (camino feliz y camino de fallo por stock) y no hay llamadas a Wompi dentro de transacciones
 - [ ] 5. Los snapshots de `sub_pedido` no se modifican
 - [ ] 6. No se libera ni se liquida saldo con disputa abierta, retención vigente o reembolso pendiente
-- [ ] 7. El stock se descuenta solo con `UPDATE ... WHERE stock >= n AND activo = true`
+- [ ] 7. El stock solo lo escribe el módulo de stock: descuento condicionado, devolución por cancelación, ajuste por diferencia sin quedar negativo y stock inicial
 - [ ] 8. La deuda se compensa solo en liquidación y con saldo liberado
 - [ ] 9. El estado del local por deuda solo cambia mediante `recalcular_estado_local()` o el job de bloqueo
 - [ ] 10. Los POST que crean pedido o pago exigen `Idempotency-Key`

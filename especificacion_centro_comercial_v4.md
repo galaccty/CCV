@@ -95,7 +95,7 @@ Todos los montos en pesos, como enteros.
 
 ### 4.3 Estados y entrega
 
-- `sub_pedido.estado`: pendiente, preparando, enviado, entregado, en_disputa, cancelado, reembolsado, reembolsado_parcial.
+- `sub_pedido.estado`: por_aceptar, preparando, enviado, entregado, en_disputa, cancelado, reembolsado, reembolsado_parcial.
 - **Terminales:** entregado, cancelado, reembolsado, reembolsado_parcial. `en_disputa` no es terminal.
 - Para marcar `enviado` el vendedor debe adjuntar evidencia (código de seguimiento, foto o referencia del domiciliario).
 - Si pasan `dias_auto_entrega` desde `enviado` sin confirmación, el sistema marca `entregado` con `entrega_confirmada_por = sistema` y notifica al comprador. Esto solo inicia el reloj de retención; no libera dinero.
@@ -106,7 +106,7 @@ Todos los montos en pesos, como enteros.
 ### 4.4 Efectivo
 
 - Solo en pedidos de un único local. Los pedidos con varios locales exigen pago digital.
-- El pedido en efectivo nace directamente en `en_proceso`, con el sub_pedido en `pendiente` y su fila en `pago` (`metodo_pago = efectivo`, estado pendiente). No toca el stock.
+- El pedido en efectivo nace directamente en `en_proceso`, con el sub_pedido en `por_aceptar` y su fila en `pago` (`metodo_pago = efectivo`, estado pendiente). No toca el stock.
 - El vendedor acepta el pedido (pasa a `preparando`) y en ese momento se descuenta el stock de forma atómica. Si ya no hay stock o la variante fue desactivada, no puede aceptarlo: el sub_pedido se cancela y se notifica al comprador.
 - Si el vendedor no acepta dentro de `horas_aceptacion`, un job cancela el sub_pedido (sin haber tocado stock).
 - PROPUESTA: código de cierre de entrega como evidencia del cobro.
@@ -117,6 +117,9 @@ Todos los montos en pesos, como enteros.
 - No hay reservas. El descuento es atómico y condicionado: `UPDATE producto_variante SET stock = stock - n WHERE id = X AND stock >= n AND activo = true`; si no afecta filas, falla.
 - Pago digital: se descuenta al confirmar el pago (4.1.4). Efectivo: al aceptar el vendedor (4.4).
 - Al cancelar un sub_pedido cuyo stock ya se descontó, el stock se devuelve.
+- El vendedor ajusta su stock **por diferencia** (+10, -3), nunca fijando un valor absoluto, y el resultado no puede quedar negativo. El stock inicial se escribe al crear la variante. Ambas operaciones pasan por el módulo de stock.
+- El carrito guardado se vacía de los ítems incluidos cuando el pago se aprueba, no al crear el pedido, para que un pago fallido o expirado no le haga perder el carrito al comprador.
+- `pedido_minimo` se aplica por local (sobre el subtotal de productos de cada sub_pedido, sin envío). Un local `en_plazo` sigue vendiendo; no pueden vender `bloqueado`, `suspendido` ni `pendiente_aprobacion`.
 
 ### 4.6 Ledger, saldos y liquidaciones
 
@@ -168,10 +171,11 @@ en otro caso:
 - `sub_pedido` pasa a `reembolsado_parcial` o `reembolsado` según lo reembolsado.
 - `pago.monto_reembolsado` suma solo los reembolsos en estado `completado`. `pago.estado` se deriva de él: 0 es aprobado; entre 0 y monto es reembolsado_parcial; igual o mayor es reembolsado. `reembolso.estado` es el ciclo de vida de cada operación (pendiente, completado, incumplido, fallido).
 - Un reembolso `pendiente` no cuenta en `monto_reembolsado`, pero el pedido muestra un indicador visible de "devolución en curso" (se calcula: existe un reembolso pendiente) y el saldo del vendedor correspondiente no se libera ni se liquida hasta que el reembolso quede `completado` o `fallido`. Verificar en la documentación de Wompi cómo se ejecutan los reembolsos.
+- **Estado de la verificación (oct 2026):** la documentación de Wompi describe una API de Reembolsos V2 (`POST /v1/refunds`, asíncrona, con evento `refund.updated`) y una anulación solo para tarjetas (`POST /v1/transactions/{id}/void`). Las páginas de producción y sandbox muestran contratos distintos y no se confirmó si los reembolsos cubren PSE y Nequi. Decisión vigente: reembolsos reales manuales desde el panel de Wompi; el proveedor falso cubre las pruebas. Se retoma con las llaves de sandbox y una consulta a soporte de Wompi.
 
 ### 4.10 Cancelaciones
 
-PROPUESTA: el comprador cancela solo en `pendiente`; en `preparando` solo si el vendedor acepta; en `enviado` no se cancela, se abre una disputa. Al cancelar se devuelve el stock descontado y, si fue digital, se reembolsa el sub_pedido. Se implementa en la Etapa 4; antes no se muestra el botón.
+PROPUESTA: el comprador cancela solo en `por_aceptar`; en `preparando` solo si el vendedor acepta; en `enviado` no se cancela, se abre una disputa. Al cancelar se devuelve el stock descontado y, si fue digital, se reembolsa el sub_pedido. Se implementa en la Etapa 4; antes no se muestra el botón.
 
 ### 4.11 Envío y redondeo
 
@@ -254,7 +258,7 @@ Son las reglas cuyo incumplimiento cuesta dinero. Sirven como README del reposit
 4. **El procesamiento de un pago aprobado es atómico:** el camino feliz ocurre en una transacción (A) y el camino de fallo por stock en otra (B). Nunca se llama a la API de Wompi dentro de una transacción de base de datos.
 5. **Los snapshots de `sub_pedido` nunca se modifican.** El neto se deriva.
 6. **"Entregado" y "el dinero se movió" son hechos distintos.** El saldo con disputa abierta, retención vigente o reembolso pendiente no se libera ni se liquida.
-7. **El stock se descuenta siempre** con `UPDATE ... WHERE stock >= n AND activo = true`; si no afecta filas, la operación falla. La única otra escritura de stock es devolverlo al cancelar un sub_pedido cuyo stock ya se había descontado.
+7. **El stock se descuenta siempre** con `UPDATE ... WHERE stock >= n AND activo = true`; si no afecta filas, la operación falla. Las únicas otras escrituras de stock son: devolverlo al cancelar un sub_pedido cuyo stock ya se había descontado, y el ajuste del vendedor (por diferencia, con `UPDATE ... SET stock = stock + d WHERE id = X AND stock + d >= 0`), más el stock inicial al crear una variante. Todas pasan por el módulo de stock.
 8. **La deuda se compensa solo en liquidación y solo con saldo liberado.**
 9. **El estado de un local por deuda solo lo cambian** `recalcular_estado_local()` y el job diario de bloqueo, siempre a través del mismo servicio.
 10. **Todo POST que crea pedido o pago exige `Idempotency-Key`.**

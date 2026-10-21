@@ -14,7 +14,7 @@ Antes de abrir un pull request, revisa los invariantes.
 4. **El procesamiento de un pago aprobado es atómico:** el camino feliz ocurre en una transacción (A) y el camino de fallo por stock en otra (B). Nunca se llama a la API de Wompi dentro de una transacción de base de datos.
 5. **Los snapshots de `sub_pedido` nunca se modifican.** El neto se deriva.
 6. **"Entregado" y "el dinero se movió" son hechos distintos.** El saldo con disputa abierta, retención vigente o reembolso pendiente no se libera ni se liquida.
-7. **El stock se descuenta siempre** con `UPDATE ... WHERE stock >= n AND activo = true`; si no afecta filas, la operación falla. La única otra escritura de stock es devolverlo al cancelar un sub_pedido cuyo stock ya se había descontado.
+7. **El stock se descuenta siempre** con `UPDATE ... WHERE stock >= n AND activo = true`; si no afecta filas, la operación falla. Las únicas otras escrituras de stock son: devolverlo al cancelar un sub_pedido cuyo stock ya se había descontado, y el ajuste del vendedor (por diferencia, con `UPDATE ... SET stock = stock + d WHERE id = X AND stock + d >= 0`), más el stock inicial al crear una variante. Todas pasan por el módulo de stock.
 8. **La deuda se compensa solo en liquidación y solo con saldo liberado.**
 9. **El estado de un local por deuda solo lo cambian** `recalcular_estado_local()` y el job diario de bloqueo, siempre a través del mismo servicio.
 10. **Todo POST que crea pedido o pago exige `Idempotency-Key`.**

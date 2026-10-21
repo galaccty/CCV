@@ -330,8 +330,9 @@ el subtotal de productos de cada local, sin envío.
 
 La cotización `POST /carrito/cotizar` usa el carrito guardado y devuelve por
 local subtotal, envío, mínimo, faltante y total. Es solo lectura: no crea pedido
-ni toca stock. El detalle público `GET /productos/{id}` devuelve `disponible`
-(hay/no hay) en vez de la cantidad exacta de inventario.
+ni toca stock. Todas las rutas públicas devuelven `disponible` y, solo cuando
+quedan cinco unidades o menos, `unidades_restantes`. Si hay más de cinco, la
+cantidad exacta de inventario nunca se expone.
 
 Las direcciones guardan `latitud` y `longitud` calculadas por el frontend. El
 backend no geocodifica: solo valida un rango aproximado de Colombia. Cualquier
@@ -341,6 +342,12 @@ dirección queda como principal; el índice único parcial impide dos principale
 CORS usa `CORS_ORIGINS` (por defecto `http://localhost:5173`) y responde con
 `Access-Control-Allow-Credentials: true` solo a ese origen exacto. No se debe
 usar `*`: la cookie de sesión y el token CSRF viajan con credenciales.
+
+En producción, el frontend y la API **deben compartir el dominio principal**
+por las cookies `SameSite=Lax`, por ejemplo `app.tudominio.com` y
+`api.tudominio.com`. Si se usan dominios distintos, el navegador no enviará la
+cookie de sesión; en ese caso habría que cambiar a `SameSite=None; Secure` en
+una etapa posterior, además de ajustar `SESSION_COOKIE_SECURE`.
 
 ---
 
@@ -429,7 +436,7 @@ terminar la Etapa 3b:
 
 ```
 Invariantes estaticos: OK (1, 4 y 7 sin violaciones).
-tests 214 · pass 202 · fail 0 · skipped 12
+tests 217 · pass 205 · fail 0 · skipped 12
 ```
 
 Las 12 que se saltan son **todas invariantes que todavía no aplican**, y cada

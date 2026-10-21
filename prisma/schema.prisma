@@ -43,6 +43,7 @@ model Usuario {
   idempotencias      Idempotencia[]
   historialSubPedido HistorialEstadoSubPedido[]
   carrito            Carrito?
+  direcciones        Direccion[]
 
   @@map("usuario")
 }
@@ -258,6 +259,26 @@ model CarritoItem {
   @@unique([carritoId, varianteId])
   @@index([varianteId])
   @@map("carrito_item")
+}
+
+// ---------------------------------------------------------------------------
+// Direcciones del comprador
+// ---------------------------------------------------------------------------
+
+model Direccion {
+  id            Int      @id @default(autoincrement())
+  usuarioId     Int      @map("usuario_id")
+  texto         String   @db.Text
+  latitud       Float
+  longitud      Float
+  principal     Boolean  @default(false)
+  creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+  @@map("direccion")
 }
 
 // ---------------------------------------------------------------------------

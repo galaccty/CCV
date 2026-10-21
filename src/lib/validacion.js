@@ -94,16 +94,35 @@ export const ESTADOS_SUB_PEDIDO = [
 export const esquemaIdPositivo = z.coerce.number().int().positive();
 
 /**
+ * Las coordenadas llegan del frontend: el backend no geocodifica. Se valida
+ * un rectangulo aproximado de Colombia (incluye San Andres y Providencia).
+ */
+export const LIMITES_COLOMBIA = Object.freeze({
+  latitudMin: -5,
+  latitudMax: 14,
+  longitudMin: -83,
+  longitudMax: -66,
+});
+
+export const esquemaDireccionEntrega = z.object({
+  texto: z.string().trim().min(5, 'La direccion es obligatoria.').max(500),
+  latitud: z.coerce
+    .number()
+    .min(LIMITES_COLOMBIA.latitudMin, 'La latitud esta fuera de Colombia.')
+    .max(LIMITES_COLOMBIA.latitudMax, 'La latitud esta fuera de Colombia.'),
+  longitud: z.coerce
+    .number()
+    .min(LIMITES_COLOMBIA.longitudMin, 'La longitud esta fuera de Colombia.')
+    .max(LIMITES_COLOMBIA.longitudMax, 'La longitud esta fuera de Colombia.'),
+});
+
+/**
  * El checkout solo acepta variante_id y cantidad. Cualquier monto que mande el
  * cliente (precio, subtotal, total, comision) se descarta: Zod solo deja las
  * claves declaradas.
  */
 export const esquemaCheckout = z.object({
-  direccion: z.object({
-    texto: z.string().trim().min(5, 'La direccion es obligatoria.').max(500),
-    latitud: z.coerce.number().min(-90).max(90),
-    longitud: z.coerce.number().min(-180).max(180),
-  }),
+  direccion: esquemaDireccionEntrega,
   metodo_pago: z.enum(['tarjeta', 'pse', 'nequi'], {
     errorMap: () => ({
       message: 'El metodo de pago debe ser tarjeta, pse o nequi.',
@@ -219,6 +238,18 @@ export const esquemaAjusteStock = z.object({
 export const esquemaItemCarrito = z.object({
   cantidad: z.coerce.number().int().min(1).max(999),
 });
+
+export const esquemaCotizarCarrito = z.object({
+  direccion: esquemaDireccionEntrega,
+});
+
+export const esquemaCrearDireccion = esquemaDireccionEntrega;
+
+export const esquemaActualizarDireccion = esquemaDireccionEntrega
+  .partial()
+  .refine((datos) => Object.keys(datos).length > 0, {
+    message: 'Envia al menos un campo para actualizar.',
+  });
 
 export const esquemaCrearRubro = z.object({
   nombre: z.string().trim().min(1).max(120),

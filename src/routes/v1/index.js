@@ -6,6 +6,7 @@ import vendedorRouter from './vendedor.js';
 import subPedidosRouter from './subPedidos.js';
 import catalogoRouter from './catalogo.js';
 import carritoRouter from './carrito.js';
+import direccionesRouter from './direcciones.js';
 import adminRouter from './admin.js';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
@@ -65,6 +66,7 @@ router.use('/sub-pedidos', subPedidosRouter);
 // catalogo. El checkout multi-local sigue viviendo en /pedidos.
 router.use(catalogoRouter);
 router.use('/carrito', carritoRouter);
+router.use('/direcciones', direccionesRouter);
 router.use('/admin', adminRouter);
 
 export default router;

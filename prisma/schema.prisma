@@ -42,6 +42,7 @@ model Usuario {
   pedidos            Pedido[]
   idempotencias      Idempotencia[]
   historialSubPedido HistorialEstadoSubPedido[]
+  carrito            Carrito?
 
   @@map("usuario")
 }
@@ -195,6 +196,7 @@ model Local {
   @@index([usuarioId])
   @@index([rubroId])
   @@index([estado])
+  @@index([estado, rubroId])
   @@map("local")
 }
 
@@ -227,6 +229,38 @@ model SubcategoriaLocal {
 }
 
 // ---------------------------------------------------------------------------
+// Carrito multi-local
+// ---------------------------------------------------------------------------
+
+model Carrito {
+  id            Int      @id @default(autoincrement())
+  usuarioId     Int      @unique @map("usuario_id")
+  creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  usuario Usuario       @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  items   CarritoItem[]
+
+  @@map("carrito")
+}
+
+model CarritoItem {
+  id            Int      @id @default(autoincrement())
+  carritoId     Int      @map("carrito_id")
+  varianteId    Int      @map("variante_id")
+  cantidad      Int
+  creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  carrito  Carrito          @relation(fields: [carritoId], references: [id], onDelete: Cascade)
+  variante ProductoVariante @relation(fields: [varianteId], references: [id], onDelete: Restrict)
+
+  @@unique([carritoId, varianteId])
+  @@index([varianteId])
+  @@map("carrito_item")
+}
+
+// ---------------------------------------------------------------------------
 // Catalogo
 // ---------------------------------------------------------------------------
 
@@ -250,6 +284,7 @@ model Producto {
 
   @@index([localId, activo])
   @@index([categoriaGlobalId])
+  @@index([localId, activo, categoriaGlobalId])
   @@map("producto")
 }
 
@@ -263,8 +298,9 @@ model ProductoVariante {
   creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
   actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
 
-  producto Producto          @relation(fields: [productoId], references: [id])
-  detalles DetalleProducto[]
+  producto     Producto          @relation(fields: [productoId], references: [id])
+  detalles     DetalleProducto[]
+  carritoItems CarritoItem[]
 
   @@index([productoId, activo])
   @@map("producto_variante")

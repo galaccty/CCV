@@ -96,7 +96,7 @@ const REGLA_ASIGNACION_SALDO = new RegExp(
 );
 
 const REGLA_SQL_STOCK = new RegExp(
-  String.raw`(UPDATE|INSERT)\s+"?producto_variante"?[\s\S]{0,140}?\bstock\b`,
+  String.raw`(UPDATE|INSERT)\s+"?producto_variante"?`,
   'i',
 );
 
@@ -182,6 +182,83 @@ function revisarInvariante({ invariante, nombre, reglas, exclusiones }) {
   return violaciones;
 }
 
+/**
+ * El invariante 7 no prohíbe tocar el precio o el estado de una variante:
+ * prohíbe escribir su STOCK por fuera del módulo. Por eso la detección mira
+ * una ventana de líneas alrededor de la escritura y exige que aparezca la
+ * columna `stock`. Las creaciones de variantes se marcan siempre, porque el
+ * stock inicial también debe pasar por el módulo.
+ */
+function revisarInvariante7() {
+  const violaciones = [];
+  const NOMBRE = 'El stock solo lo escribe el modulo de stock';
+
+  for (const carpeta of CARPETAS_REVISADAS) {
+    const absoluta = path.join(RAIZ, carpeta);
+    if (!fs.existsSync(absoluta)) continue;
+
+    for (const archivo of recorrer(absoluta)) {
+      const relativa = path.relative(RAIZ, archivo).replace(/\\/g, '/');
+      if (listaBlanca(7, relativa)) continue;
+
+      const lineas = lineasDe(archivo);
+      for (let indice = 0; indice < lineas.length; indice += 1) {
+        const linea = lineas[indice];
+        if (esComentario(linea)) continue;
+
+        const ventana = lineas.slice(indice, indice + 30).join('\n');
+        const ventanaSql = lineas.slice(indice, indice + 6).join('\n');
+        const escrituraOrm = linea.match(REGLA_ORM_STOCK);
+        const escrituraSql = linea.match(REGLA_SQL_STOCK);
+        const asignacionDirecta = REGLA_ASIGNACION_STOCK.test(linea);
+
+        if (escrituraOrm) {
+          const metodo = escrituraOrm[2].toLowerCase();
+          const creaVariante = ['create', 'createmany', 'upsert'].includes(metodo);
+          const escribeStock = /\bstock\s*:/.test(ventana);
+
+          if (creaVariante || escribeStock) {
+            violaciones.push({
+              invariante: 7,
+              nombre: NOMBRE,
+              archivo: relativa,
+              linea: indice + 1,
+              como: 'escritura por el ORM sobre producto_variante',
+              texto: linea.trim().slice(0, 100),
+            });
+            continue;
+          }
+        }
+
+        if (escrituraSql && /\bstock\b/i.test(ventanaSql)) {
+          violaciones.push({
+            invariante: 7,
+            nombre: NOMBRE,
+            archivo: relativa,
+            linea: indice + 1,
+            como: 'escritura SQL sobre producto_variante.stock',
+            texto: linea.trim().slice(0, 100),
+          });
+          continue;
+        }
+
+        if (asignacionDirecta) {
+          violaciones.push({
+            invariante: 7,
+            nombre: NOMBRE,
+            archivo: relativa,
+            linea: indice + 1,
+            como: 'asignacion directa a stock',
+            texto: linea.trim().slice(0, 100),
+          });
+        }
+      }
+    }
+  }
+
+  return violaciones;
+}
+
 export function ejecutarChequeos() {
   const resultados = [
     revisarInvariante({
@@ -196,16 +273,7 @@ export function ejecutarChequeos() {
         PRUEBAS_QUE_VIOLAN_CUENTA_LOCAL.has(relativa),
     }),
 
-    revisarInvariante({
-      invariante: 7,
-      nombre: 'El stock se descuenta solo por el modulo de stock',
-      reglas: [
-        { patron: REGLA_SQL_STOCK, como: 'escritura SQL sobre producto_variante.stock' },
-        { patron: REGLA_ORM_STOCK, como: 'escritura por el ORM sobre producto_variante' },
-        { patron: REGLA_ASIGNACION_STOCK, como: 'asignacion directa a stock' },
-      ],
-      exclusiones: () => false,
-    }),
+    revisarInvariante7(),
 
     revisarInvariante({
       invariante: 4,

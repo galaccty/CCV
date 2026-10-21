@@ -131,3 +131,142 @@ export const esquemaEnviarSubPedido = z.object({
 export const esquemaListaSubPedidos = z.object({
   estado: z.enum(ESTADOS_SUB_PEDIDO).optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Esquemas de validacion de la Etapa 3
+// ---------------------------------------------------------------------------
+
+const esquemaJsonObjeto = z.record(z.string(), z.unknown());
+
+const esquemaUrlArchivo = z.string().trim().min(1).max(2000);
+
+export const ESTADOS_LOCAL_ADMIN = ['activo', 'suspendido'];
+
+export const esquemaCrearLocal = z.object({
+  rubro_id: z.coerce.number().int().positive(),
+  nombre: z.string().trim().min(2).max(160),
+  logo_url: z.string().trim().min(1).max(2000).nullable().optional(),
+  banner_fondo_url: z.string().trim().min(1).max(2000).nullable().optional(),
+  latitud: z.coerce.number().min(-90).max(90),
+  longitud: z.coerce.number().min(-180).max(180),
+});
+
+export const esquemaActualizarLocal = esquemaCrearLocal
+  .partial()
+  .refine((datos) => Object.keys(datos).length > 0, {
+    message: 'Envia al menos un campo para actualizar.',
+  });
+
+export const esquemaCrearSubcategoria = z.object({
+  nombre: z.string().trim().min(1).max(120),
+});
+
+export const esquemaActualizarSubcategoria = esquemaCrearSubcategoria;
+
+export const esquemaCrearVariante = z.object({
+  atributos: esquemaJsonObjeto.nullable().optional(),
+  precio: z.coerce.number().int().positive(),
+  stock: z.coerce.number().int().min(0).max(1_000_000).default(0),
+  activo: z.boolean().optional().default(true),
+});
+
+export const esquemaActualizarVariante = z
+  .object({
+    atributos: esquemaJsonObjeto.nullable().optional(),
+    precio: z.coerce.number().int().positive().optional(),
+    activo: z.boolean().optional(),
+  })
+  .refine((datos) => Object.keys(datos).length > 0, {
+    message: 'Envia al menos un campo para actualizar.',
+  });
+
+export const esquemaCrearProducto = z.object({
+  local_id: z.coerce.number().int().positive(),
+  categoria_global_id: z.coerce.number().int().positive(),
+  subcategoria_local_id: z.coerce.number().int().positive().nullable().optional(),
+  nombre: z.string().trim().min(1).max(200),
+  descripcion: z.string().trim().max(5000).nullable().optional(),
+  fotos: z.array(esquemaUrlArchivo).max(20).nullable().optional(),
+  atributos: esquemaJsonObjeto.nullable().optional(),
+  variantes: z.array(esquemaCrearVariante).min(1).max(50),
+});
+
+export const esquemaActualizarProducto = z
+  .object({
+    categoria_global_id: z.coerce.number().int().positive().optional(),
+    subcategoria_local_id: z.coerce.number().int().positive().nullable().optional(),
+    nombre: z.string().trim().min(1).max(200).optional(),
+    descripcion: z.string().trim().max(5000).nullable().optional(),
+    fotos: z.array(esquemaUrlArchivo).max(20).nullable().optional(),
+    atributos: esquemaJsonObjeto.nullable().optional(),
+    activo: z.boolean().optional(),
+  })
+  .refine((datos) => Object.keys(datos).length > 0, {
+    message: 'Envia al menos un campo para actualizar.',
+  });
+
+export const esquemaAjusteStock = z.object({
+  diferencia: z.coerce
+    .number()
+    .int()
+    .min(-1_000_000)
+    .max(1_000_000)
+    .refine((valor) => valor !== 0, {
+      message: 'La diferencia de stock no puede ser cero.',
+    }),
+});
+
+export const esquemaItemCarrito = z.object({
+  cantidad: z.coerce.number().int().min(1).max(999),
+});
+
+export const esquemaCrearRubro = z.object({
+  nombre: z.string().trim().min(1).max(120),
+});
+
+export const esquemaActualizarRubro = esquemaCrearRubro;
+
+export const esquemaCrearCategoriaGlobal = z.object({
+  nombre: z.string().trim().min(1).max(120),
+  padre_id: z.coerce.number().int().positive().nullable().optional(),
+  rubro_id: z.coerce.number().int().positive().nullable().optional(),
+});
+
+export const esquemaActualizarCategoriaGlobal = z
+  .object({
+    nombre: z.string().trim().min(1).max(120).optional(),
+    padre_id: z.coerce.number().int().positive().nullable().optional(),
+    rubro_id: z.coerce.number().int().positive().nullable().optional(),
+  })
+  .refine((datos) => Object.keys(datos).length > 0, {
+    message: 'Envia al menos un campo para actualizar.',
+  });
+
+export const esquemaCambiarEstadoLocal = z.object({
+  estado: z.enum(ESTADOS_LOCAL_ADMIN),
+});
+
+export const esquemaFiltrosLocales = z.object({
+  rubro_id: z.coerce.number().int().positive().optional(),
+  categoria_global_id: z.coerce.number().int().positive().optional(),
+  estado: z
+    .enum([
+      'pendiente_aprobacion',
+      'activo',
+      'en_plazo',
+      'bloqueado',
+      'suspendido',
+    ])
+    .optional(),
+});
+
+export const esquemaFiltrosProductos = z.object({
+  local_id: z.coerce.number().int().positive().optional(),
+  categoria_global_id: z.coerce.number().int().positive().optional(),
+  subcategoria_local_id: z.coerce.number().int().positive().optional(),
+});
+
+export const esquemaFiltrosCategorias = z.object({
+  rubro_id: z.coerce.number().int().positive().optional(),
+  padre_id: z.coerce.number().int().positive().nullable().optional(),
+});

@@ -31,6 +31,27 @@ export class ErrorStockInsuficiente extends Error {
   }
 }
 
+export class ErrorAjusteStockNegativo extends Error {
+  constructor(varianteId, diferencia, stockActual) {
+    super(
+      `El ajuste de ${diferencia} dejaria el stock de la variante ${varianteId} ` +
+        `en negativo (stock actual: ${stockActual}).`,
+    );
+    this.name = 'ErrorAjusteStockNegativo';
+    this.varianteId = varianteId;
+    this.diferencia = diferencia;
+    this.stockActual = stockActual;
+  }
+}
+
+export class ErrorVarianteNoEncontrada extends Error {
+  constructor(varianteId) {
+    super(`No existe la variante ${varianteId}.`);
+    this.name = 'ErrorVarianteNoEncontrada';
+    this.varianteId = varianteId;
+  }
+}
+
 function validarCantidad(cantidad) {
   if (!Number.isInteger(cantidad) || cantidad <= 0) {
     throw new Error(`Cantidad de stock invalida: ${cantidad}`);
@@ -110,6 +131,44 @@ export async function devolverStock(tx, varianteId, cantidad) {
 
   if (filas === 0) {
     throw new Error(`No existe la variante ${varianteId}.`);
+  }
+
+  return filas;
+}
+
+/**
+ * Ajuste manual del vendedor, siempre por diferencia y por el modulo de stock.
+ * El WHERE hace que el resultado nunca quede negativo, incluso con dos ajustes
+ * simultaneos: si la fila no se actualiza, no se toca nada.
+ */
+export async function ajustarStock(tx, varianteId, diferencia) {
+  validarVariante(varianteId);
+
+  if (!Number.isInteger(diferencia)) {
+    throw new Error(`Diferencia de stock invalida: ${diferencia}`);
+  }
+  if (diferencia === 0) {
+    throw new Error('La diferencia de stock no puede ser cero.');
+  }
+  if (Math.abs(diferencia) > 1_000_000) {
+    throw new Error('La diferencia de stock excede el limite permitido.');
+  }
+
+  const filas = await tx.$executeRaw`
+    UPDATE "producto_variante"
+       SET "stock" = "stock" + ${diferencia}
+     WHERE "id" = ${varianteId}
+       AND "stock" + ${diferencia} >= 0
+  `;
+
+  if (filas === 0) {
+    const variante = await tx.productoVariante.findUnique({
+      where: { id: varianteId },
+      select: { stock: true },
+    });
+
+    if (!variante) throw new ErrorVarianteNoEncontrada(varianteId);
+    throw new ErrorAjusteStockNegativo(varianteId, diferencia, variante.stock);
   }
 
   return filas;

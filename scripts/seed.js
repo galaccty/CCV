@@ -1,14 +1,15 @@
 /**
- * SEMILLA DE CONFIGURACION
- * ========================
- * Carga la tabla `configuracion` con las once claves de la seccion 3.
+ * SEMILLA DE CONFIGURACION Y TAXONOMIA
+ * ====================================
+ * Carga la tabla `configuracion` con las once claves de la seccion 3 y los
+ * rubros/categorias globales de arranque de la Etapa 3.
  *
- * OJO: estos son VALORES DE EJEMPLO. La especificacion deja varios de ellos
- * como decision pendiente (seccion 2). Cambialos cuando tengas los numeros
- * reales de Wompi y la respuesta del abogado y del contador.
+ * OJO: los valores de configuracion son VALORES DE EJEMPLO. La especificacion
+ * deja varios de ellos como decision pendiente (seccion 2). Cambialos cuando
+ * tengas los numeros reales de Wompi y la respuesta del abogado y del contador.
  *
- * El script se puede volver a ejecutar las veces que quieras: usa upsert,
- * asi que actualiza lo que exista y no duplica nada.
+ * El script se puede volver a ejecutar las veces que quieras: usa upsert o
+ * busquedas por nombre, asi que actualiza lo que exista y no duplica nada.
  *
  *   npm run seed
  */
@@ -24,7 +25,7 @@ export const CONFIGURACION_INICIAL = [
   ['comision_minima', '2000', 'entero',
     'Comision minima por sub_pedido, para que los pedidos muy chicos no dejen margen negativo. Congelada en el pedido.'],
   ['pedido_minimo', '30000', 'entero',
-    'Valor minimo del pedido (productos + envio). Congelado en el pedido.'],
+    'Subtotal minimo de productos por local (sin envio). Congelado en el pedido.'],
   ['tarifa_base_envio', '2000', 'entero',
     'Base del costo de envio por sub_pedido. Congelada en el pedido.'],
   ['tarifa_por_km', '800', 'entero',
@@ -79,15 +80,124 @@ export async function sembrarConfiguracion({ registrarAuditoria = false } = {}) 
   return resultados;
 }
 
+/**
+ * Taxonomia inicial de la Etapa 3. Son datos de arranque: el admin puede
+ * editarlos despues desde /api/v1/admin/rubros y /api/v1/admin/categorias-globales.
+ *
+ * Las categorias de la lista son las raices y sus hijas. Los rubros que no
+ * tienen categorias se pueden poblar mas adelante.
+ */
+export const TAXONOMIA_INICIAL = [
+  {
+    rubro: 'Ropa y accesorios',
+    categoriaRaiz: 'Ropa',
+    hijas: ['Camisetas', 'Buzos', 'Pantalones', 'Accesorios'],
+  },
+  {
+    rubro: 'Tecnología',
+    categoriaRaiz: 'Tecnología',
+    hijas: ['Computadores', 'Celulares', 'Accesorios'],
+  },
+  {
+    rubro: 'Comida y bebidas',
+    categoriaRaiz: 'Comida',
+    hijas: ['Postres', 'Bebidas', 'Comidas'],
+  },
+  {
+    rubro: 'Perfumería y belleza',
+    categoriaRaiz: 'Perfumería',
+    hijas: ['Perfumes', 'Cuidado personal'],
+  },
+  { rubro: 'Calzado', categoriaRaiz: null, hijas: [] },
+  { rubro: 'Hogar', categoriaRaiz: null, hijas: [] },
+  { rubro: 'Arte y manualidades', categoriaRaiz: null, hijas: [] },
+  { rubro: 'Mascotas', categoriaRaiz: null, hijas: [] },
+];
+
+export async function sembrarTaxonomia() {
+  let rubrosCreados = 0;
+  let categoriasCreadas = 0;
+
+  for (const grupo of TAXONOMIA_INICIAL) {
+    let rubro = await prisma.rubro.findUnique({
+      where: { nombre: grupo.rubro },
+    });
+
+    if (!rubro) {
+      rubro = await prisma.rubro.create({ data: { nombre: grupo.rubro } });
+      rubrosCreados += 1;
+    }
+
+    if (!grupo.categoriaRaiz) continue;
+
+    let raiz = await prisma.categoriaGlobal.findFirst({
+      where: {
+        nombre: grupo.categoriaRaiz,
+        rubroId: rubro.id,
+        padreId: null,
+      },
+    });
+
+    if (!raiz) {
+      raiz = await prisma.categoriaGlobal.create({
+        data: {
+          nombre: grupo.categoriaRaiz,
+          rubroId: rubro.id,
+        },
+      });
+      categoriasCreadas += 1;
+    }
+
+    for (const nombreHija of grupo.hijas) {
+      const hija = await prisma.categoriaGlobal.findFirst({
+        where: {
+          nombre: nombreHija,
+          rubroId: rubro.id,
+          padreId: raiz.id,
+        },
+      });
+
+      if (!hija) {
+        await prisma.categoriaGlobal.create({
+          data: {
+            nombre: nombreHija,
+            rubroId: rubro.id,
+            padreId: raiz.id,
+          },
+        });
+        categoriasCreadas += 1;
+      }
+    }
+  }
+
+  return {
+    rubrosCreados,
+    categoriasCreadas,
+    totalRubros: await prisma.rubro.count(),
+    totalCategorias: await prisma.categoriaGlobal.count(),
+  };
+}
+
 // Si se ejecuta directo (npm run seed), siembra y cierra.
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const filas = await sembrarConfiguracion();
-    logger.info({ total: filas.length }, 'configuracion sembrada');
+    const taxonomia = await sembrarTaxonomia();
+    logger.info(
+      { total: filas.length, ...taxonomia },
+      'configuracion y taxonomia sembradas',
+    );
     console.log('\nConfiguracion cargada:\n');
     for (const f of filas) {
       console.log(`  ${f.clave.padEnd(26)} ${String(f.valor).padEnd(10)} ${f.tipo}`);
     }
+    console.log('\nTaxonomia inicial:');
+    console.log(
+      `  rubros: ${taxonomia.totalRubros} (nuevos: ${taxonomia.rubrosCreados})`,
+    );
+    console.log(
+      `  categorias: ${taxonomia.totalCategorias} (nuevas: ${taxonomia.categoriasCreadas})`,
+    );
     console.log('\nRevisa .env.example: estos son valores de ejemplo.\n');
     await prisma.$disconnect();
   } catch (err) {

@@ -32,6 +32,16 @@ export const ESTADOS_TERMINALES = new Set([
   'reembolsado_parcial',
 ]);
 
+/**
+ * Un local puede vender mientras esta activo o en plazo de pagar su deuda.
+ * `bloqueado`, `suspendido` y `pendiente_aprobacion` no venden.
+ */
+export const ESTADOS_LOCAL_VENTA = new Set(['activo', 'en_plazo']);
+
+export function puedeVenderLocal(estado) {
+  return ESTADOS_LOCAL_VENTA.has(estado);
+}
+
 export function puedeTransicionar(desde, hacia) {
   return TRANSICIONES_SUB_PEDIDO[desde]?.includes(hacia) ?? false;
 }

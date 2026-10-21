@@ -164,6 +164,10 @@ describe('POST /api/v1/carrito/cotizar', () => {
     longitud: -74.05,
   };
 
+  function claveUnica() {
+    return `cotizacion-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
   test('exige sesion', CON_BASE, async () => {
     const r = await cliente().post('/api/v1/carrito/cotizar', {
       direccion,
@@ -258,6 +262,67 @@ describe('POST /api/v1/carrito/cotizar', () => {
     assert.equal(r.body.locales[0].cumple_pedido_minimo, false);
     assert.equal(r.body.locales[0].faltante_pedido_minimo, 20000);
     assert.equal(r.body.locales[0].total, 12000);
+  });
+
+  test('la cotizacion coincide exactamente con el checkout por local y en el total', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const uno = await crearCatalogo({ precio: 20000n, stockInicial: 10 });
+    const dos = await crearCatalogo({ precio: 30000n, stockInicial: 10 });
+    const items = [
+      { variante_id: uno.variante.id, cantidad: 2 },
+      { variante_id: dos.variante.id, cantidad: 1 },
+    ];
+
+    for (const item of items) {
+      await comprador.cliente.put(
+        `/api/v1/carrito/items/${item.variante_id}`,
+        { cantidad: item.cantidad },
+      );
+    }
+
+    const cotizacion = await comprador.cliente.post(
+      '/api/v1/carrito/cotizar',
+      { direccion },
+    );
+    assert.equal(cotizacion.status, 200, JSON.stringify(cotizacion.body));
+
+    const checkout = await comprador.cliente.post(
+      '/api/v1/pedidos',
+      {
+        direccion,
+        metodo_pago: 'tarjeta',
+        items,
+      },
+      { 'Idempotency-Key': claveUnica() },
+    );
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+
+    assert.equal(checkout.body.total, cotizacion.body.total);
+    assert.equal(
+      checkout.body.sub_pedidos.length,
+      cotizacion.body.locales.length,
+    );
+
+    const cotizadoPorLocal = new Map(
+      cotizacion.body.locales.map((local) => [local.local_id, local]),
+    );
+
+    for (const subPedido of checkout.body.sub_pedidos) {
+      const localCotizado = cotizadoPorLocal.get(subPedido.local_id);
+      assert.ok(localCotizado, `falta la cotizacion del local ${subPedido.local_id}`);
+      assert.deepEqual(
+        {
+          subtotal_productos: subPedido.subtotal_productos,
+          costo_envio: subPedido.costo_envio,
+          total: subPedido.total,
+        },
+        {
+          subtotal_productos: localCotizado.subtotal_productos,
+          costo_envio: localCotizado.costo_envio,
+          total: localCotizado.total,
+        },
+      );
+    }
   });
 
   test('un carrito vacio devuelve una cotizacion vacia', CON_BASE, async () => {

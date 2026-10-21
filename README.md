@@ -80,9 +80,10 @@ Hay dos bases:
 - **`ccv`** — tu desarrollo. Acá va `npm run db:migrate` y `npm run seed`.
 - **`ccv_test`** — la usan las pruebas. Las pruebas cambian el nombre de la
   base automáticamente: **nunca tocan tu base de desarrollo**. Además,
-  `npm test` vacía `ccv_test` antes y después de correr (script
-  `scripts/limpiar-base-pruebas.js`), así no se acumulan usuarios ni pedidos
-  de corridas viejas.
+  `npm test` **recrea `ccv_test` desde cero** antes de correr (script
+  `scripts/recrear-base-pruebas.js`: borra la base, la crea de nuevo y aplica
+  las migraciones). Así no se acumulan usuarios ni pedidos de corridas viejas
+  y los triggers de protección quedan activos durante toda la prueba.
 
 > **Si la base está apagada, las pruebas fallan.** No se saltan solas: el error
 > dice `Levantala con: npm run db:iniciar`. Es a propósito, porque las pruebas

@@ -35,9 +35,13 @@ model Usuario {
   creadoEn        DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
   actualizadoEn   DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
 
-  roles     UsuarioRol[]
-  tokens    TokenVerificacion[]
-  auditoria AuditoriaAdmin[]
+  roles              UsuarioRol[]
+  tokens             TokenVerificacion[]
+  auditoria          AuditoriaAdmin[]
+  locales            Local[]
+  pedidos            Pedido[]
+  idempotencias      Idempotencia[]
+  historialSubPedido HistorialEstadoSubPedido[]
 
   @@map("usuario")
 }
@@ -95,11 +99,11 @@ enum TipoToken {
 // ---------------------------------------------------------------------------
 
 model Configuracion {
-  clave       String   @id @db.VarChar(80)
-  valor       String   @db.Text
-  tipo        TipoValor
-  descripcion String?  @db.VarChar(300)
-  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  clave         String    @id @db.VarChar(80)
+  valor         String    @db.Text
+  tipo          TipoValor
+  descripcion   String?   @db.VarChar(300)
+  actualizadoEn DateTime  @updatedAt @map("actualizado_en") @db.Timestamptz(3)
 
   @@map("configuracion")
 }
@@ -118,14 +122,14 @@ enum TipoValor {
 // ---------------------------------------------------------------------------
 
 model AuditoriaAdmin {
-  id        Int          @id @default(autoincrement())
-  origen    OrigenAdmin
-  adminId   Int?         @map("admin_id")
-  accion    String       @db.VarChar(80)
-  objeto    String       @db.VarChar(80)
-  objetoId  String?      @map("objeto_id") @db.VarChar(80)
-  detalle   Json?
-  fecha     DateTime     @default(now()) @db.Timestamptz(3)
+  id       Int         @id @default(autoincrement())
+  origen   OrigenAdmin
+  adminId  Int?        @map("admin_id")
+  accion   String      @db.VarChar(80)
+  objeto   String      @db.VarChar(80)
+  objetoId String?     @map("objeto_id") @db.VarChar(80)
+  detalle  Json?
+  fecha    DateTime    @default(now()) @db.Timestamptz(3)
 
   admin Usuario? @relation(fields: [adminId], references: [id], onDelete: SetNull)
 
@@ -139,4 +143,464 @@ enum OrigenAdmin {
   sistema
 
   @@map("origen_admin")
+}
+
+// ===========================================================================
+// ETAPA 2 - CORTE VERTICAL
+// ===========================================================================
+// Estas tablas se agregan en una migracion NUEVA. La migracion de la Etapa 1
+// no se toca nunca.
+//
+// Criterio de dinero: todos los montos son enteros en pesos. Wompi trabaja en
+// centavos, asi que la conversion (x100) se hace solo en el borde con Wompi.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Rubro y categorias (la base que necesitan local y producto)
+// ---------------------------------------------------------------------------
+
+model Rubro {
+  id     Int    @id @default(autoincrement())
+  nombre String @unique @db.VarChar(120)
+
+  locales    Local[]
+  categorias CategoriaGlobal[]
+
+  @@map("rubro")
+}
+
+model Local {
+  id                   Int         @id @default(autoincrement())
+  usuarioId            Int         @map("usuario_id")
+  rubroId              Int         @map("rubro_id")
+  nombre               String      @db.VarChar(160)
+  logoUrl              String?     @map("logo_url") @db.Text
+  bannerFondoUrl       String?     @map("banner_fondo_url") @db.Text
+  latitud              Float
+  longitud             Float
+  estado               EstadoLocal @default(pendiente_aprobacion)
+  promedioCalificacion Float       @default(0) @map("promedio_calificacion")
+  totalCalificaciones  Int         @default(0) @map("total_calificaciones")
+  creadoEn             DateTime    @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn        DateTime    @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  usuario       Usuario             @relation(fields: [usuarioId], references: [id])
+  rubro         Rubro               @relation(fields: [rubroId], references: [id])
+  productos     Producto[]
+  subcategorias SubcategoriaLocal[]
+  subPedidos    SubPedido[]
+  cuenta        CuentaLocal?
+  movimientos   Ledger[]
+
+  @@index([usuarioId])
+  @@index([rubroId])
+  @@index([estado])
+  @@map("local")
+}
+
+model CategoriaGlobal {
+  id      Int    @id @default(autoincrement())
+  nombre  String @db.VarChar(120)
+  padreId Int?   @map("padre_id")
+  rubroId Int?   @map("rubro_id")
+
+  padre     CategoriaGlobal?  @relation("CategoriaPadre", fields: [padreId], references: [id])
+  hijos     CategoriaGlobal[] @relation("CategoriaPadre")
+  rubro     Rubro?            @relation(fields: [rubroId], references: [id])
+  productos Producto[]
+
+  @@index([padreId])
+  @@index([rubroId])
+  @@map("categoria_global")
+}
+
+model SubcategoriaLocal {
+  id      Int    @id @default(autoincrement())
+  localId Int    @map("local_id")
+  nombre  String @db.VarChar(120)
+
+  local     Local      @relation(fields: [localId], references: [id])
+  productos Producto[]
+
+  @@unique([localId, nombre])
+  @@map("subcategoria_local")
+}
+
+// ---------------------------------------------------------------------------
+// Catalogo
+// ---------------------------------------------------------------------------
+
+model Producto {
+  id                  Int      @id @default(autoincrement())
+  localId             Int      @map("local_id")
+  categoriaGlobalId   Int      @map("categoria_global_id")
+  subcategoriaLocalId Int?     @map("subcategoria_local_id")
+  nombre              String   @db.VarChar(200)
+  descripcion         String?  @db.Text
+  fotos               Json?
+  atributos           Json?
+  activo              Boolean  @default(true)
+  creadoEn            DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn       DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  local             Local              @relation(fields: [localId], references: [id])
+  categoriaGlobal   CategoriaGlobal    @relation(fields: [categoriaGlobalId], references: [id])
+  subcategoriaLocal SubcategoriaLocal? @relation(fields: [subcategoriaLocalId], references: [id])
+  variantes         ProductoVariante[]
+
+  @@index([localId, activo])
+  @@index([categoriaGlobalId])
+  @@map("producto")
+}
+
+model ProductoVariante {
+  id            Int      @id @default(autoincrement())
+  productoId    Int      @map("producto_id")
+  atributos     Json?
+  precio        Int
+  stock         Int      @default(0)
+  activo        Boolean  @default(true)
+  creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  producto Producto          @relation(fields: [productoId], references: [id])
+  detalles DetalleProducto[]
+
+  @@index([productoId, activo])
+  @@map("producto_variante")
+}
+
+// ---------------------------------------------------------------------------
+// Pedido y sub-pedidos
+// ---------------------------------------------------------------------------
+
+model Pedido {
+  id                Int          @id @default(autoincrement())
+  usuarioId         Int          @map("usuario_id")
+  direccionTexto    String       @map("direccion_texto") @db.Text
+  direccionLatitud  Float        @map("direccion_latitud")
+  direccionLongitud Float        @map("direccion_longitud")
+  total             Int
+  metodoPago        MetodoPago   @map("metodo_pago")
+  estado            EstadoPedido @default(pendiente_pago)
+  configSnapshot    Json         @map("config_snapshot")
+  creadoEn          DateTime     @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn     DateTime     @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  usuario    Usuario     @relation(fields: [usuarioId], references: [id])
+  subPedidos SubPedido[]
+  pagos      Pago[]
+
+  @@index([usuarioId, creadoEn])
+  @@index([estado])
+  @@map("pedido")
+}
+
+model SubPedido {
+  id                   Int                   @id @default(autoincrement())
+  pedidoId             Int                   @map("pedido_id")
+  localId              Int                   @map("local_id")
+  nombreLocal          String                @map("nombre_local") @db.VarChar(160)
+  subtotalProductos    Int                   @map("subtotal_productos")
+  costoEnvio           Int                   @map("costo_envio")
+  comision             Int
+  total                Int
+  estado               EstadoSubPedido       @default(pendiente)
+  evidenciaEnvio       String?               @map("evidencia_envio") @db.Text
+  entregaConfirmadaPor EntregaConfirmadaPor? @map("entrega_confirmada_por")
+  fechaEntrega         DateTime?             @map("fecha_entrega") @db.Timestamptz(3)
+  saldoLiberadoEn      DateTime?             @map("saldo_liberado_en") @db.Timestamptz(3)
+  notasEntrega         String?               @map("notas_entrega") @db.Text
+  creadoEn             DateTime              @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn        DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  pedido      Pedido                     @relation(fields: [pedidoId], references: [id])
+  local       Local                      @relation(fields: [localId], references: [id])
+  detalles    DetalleProducto[]
+  historial   HistorialEstadoSubPedido[]
+  movimientos Ledger[]
+  reembolsos  Reembolso[]
+
+  @@index([pedidoId])
+  @@index([localId, estado])
+  @@map("sub_pedido")
+}
+
+model DetalleProducto {
+  id                Int    @id @default(autoincrement())
+  subPedidoId       Int    @map("sub_pedido_id")
+  varianteId        Int    @map("variante_id")
+  nombreProducto    String @map("nombre_producto") @db.VarChar(200)
+  atributosElegidos Json?  @map("atributos_elegidos")
+  cantidad          Int
+  precioUnitario    Int    @map("precio_unitario")
+
+  subPedido SubPedido        @relation(fields: [subPedidoId], references: [id])
+  variante  ProductoVariante @relation(fields: [varianteId], references: [id])
+
+  @@unique([subPedidoId, varianteId])
+  @@index([varianteId])
+  @@map("detalle_producto")
+}
+
+model HistorialEstadoSubPedido {
+  id             Int              @id @default(autoincrement())
+  subPedidoId    Int              @map("sub_pedido_id")
+  estadoAnterior EstadoSubPedido? @map("estado_anterior")
+  estadoNuevo    EstadoSubPedido  @map("estado_nuevo")
+  cambiadoPor    Int?             @map("cambiado_por")
+  fecha          DateTime         @default(now()) @db.Timestamptz(3)
+
+  subPedido SubPedido @relation(fields: [subPedidoId], references: [id])
+  usuario   Usuario?  @relation(fields: [cambiadoPor], references: [id], onDelete: SetNull)
+
+  @@index([subPedidoId, fecha])
+  @@map("historial_estado_sub_pedido")
+}
+
+// ---------------------------------------------------------------------------
+// Pagos, webhooks e idempotencia
+// ---------------------------------------------------------------------------
+
+model Pago {
+  id                 Int        @id @default(autoincrement())
+  tipoPago           TipoPago   @default(pedido) @map("tipo_pago")
+  pedidoId           Int?       @map("pedido_id")
+  referencia         String     @unique @db.VarChar(255)
+  idTransaccionWompi String?    @unique @map("id_transaccion_wompi") @db.VarChar(120)
+  metodoPago         MetodoPago @map("metodo_pago")
+  monto              Int
+  montoReembolsado   Int        @default(0) @map("monto_reembolsado")
+  estado             EstadoPago @default(pendiente)
+  fechaCreacion      DateTime   @default(now()) @map("fecha_creacion") @db.Timestamptz(3)
+  fechaActualizacion DateTime   @updatedAt @map("fecha_actualizacion") @db.Timestamptz(3)
+
+  pedido      Pedido?     @relation(fields: [pedidoId], references: [id])
+  reembolsos  Reembolso[]
+  movimientos Ledger[]
+
+  // Un pedido tiene exactamente un pago. Postgres permite varios NULL en un
+  // indice UNIQUE, asi que los pagos de publicidad (pedido_id NULL) no chocan.
+  @@unique([pedidoId])
+  @@index([estado])
+  @@map("pago")
+}
+
+model EventoWebhook {
+  id         Int               @id @default(autoincrement())
+  referencia String?           @db.VarChar(255)
+  payload    Json
+  procesado  Boolean           @default(false)
+  resultado  ResultadoWebhook?
+  fecha      DateTime          @default(now()) @db.Timestamptz(3)
+
+  @@index([referencia])
+  @@index([fecha])
+  @@map("evento_webhook")
+}
+
+model Idempotencia {
+  id            Int                @id @default(autoincrement())
+  clave         String             @db.VarChar(255)
+  usuarioId     Int                @map("usuario_id")
+  ruta          String             @db.VarChar(255)
+  estado        EstadoIdempotencia @default(en_proceso)
+  codigoHttp    Int?               @map("codigo_http")
+  respuestaJson Json?              @map("respuesta_json")
+  fecha         DateTime           @default(now()) @db.Timestamptz(3)
+  expira        DateTime           @db.Timestamptz(3)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@unique([usuarioId, ruta, clave])
+  @@index([expira])
+  @@map("idempotencia")
+}
+
+// ---------------------------------------------------------------------------
+// Reembolsos (minimo necesario para el camino B de 4.1.4)
+// ---------------------------------------------------------------------------
+// La tabla completa con disputas y reembolsos por linea llega en la Etapa 4.
+// Esta version alcanza para crear el reembolso total automatico cuando falla
+// el stock, que es lo que exige la Etapa 2.
+
+model Reembolso {
+  id            Int             @id @default(autoincrement())
+  pagoId        Int             @map("pago_id")
+  subPedidoId   Int             @map("sub_pedido_id")
+  tipo          TipoReembolso   @default(digital)
+  monto         Int
+  estado        EstadoReembolso @default(pendiente)
+  motivo        String          @db.VarChar(200)
+  fecha         DateTime        @default(now()) @db.Timestamptz(3)
+  actualizadoEn DateTime        @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  pago        Pago      @relation(fields: [pagoId], references: [id])
+  subPedido   SubPedido @relation(fields: [subPedidoId], references: [id])
+  movimientos Ledger[]
+
+  @@index([pagoId])
+  @@index([subPedidoId])
+  @@index([estado])
+  @@map("reembolso")
+}
+
+// ---------------------------------------------------------------------------
+// Ledger y cuenta del local
+// ---------------------------------------------------------------------------
+
+model Ledger {
+  id          Int            @id @default(autoincrement())
+  localId     Int?           @map("local_id")
+  subPedidoId Int?           @map("sub_pedido_id")
+  pagoId      Int?           @map("pago_id")
+  reembolsoId Int?           @map("reembolso_id")
+  tipo        TipoMovimiento @map("tipo")
+  monto       Int
+  fecha       DateTime       @default(now()) @db.Timestamptz(3)
+
+  local     Local?     @relation(fields: [localId], references: [id], onDelete: Restrict)
+  subPedido SubPedido? @relation(fields: [subPedidoId], references: [id], onDelete: Restrict)
+  pago      Pago?      @relation(fields: [pagoId], references: [id], onDelete: Restrict)
+  reembolso Reembolso? @relation(fields: [reembolsoId], references: [id], onDelete: Restrict)
+
+  // liquidacion_id llega en la Etapa 4, cuando exista la tabla liquidacion.
+  @@index([localId, fecha])
+  @@index([pagoId])
+  @@index([subPedidoId])
+  @@index([reembolsoId])
+  @@map("ledger")
+}
+
+model CuentaLocal {
+  localId         Int       @id @map("local_id")
+  saldoDeuda      Int       @default(0) @map("saldo_deuda")
+  saldoPorPagar   Int       @default(0) @map("saldo_por_pagar")
+  saldoCongelado  Int       @default(0) @map("saldo_congelado")
+  fechaLimitePago DateTime? @map("fecha_limite_pago") @db.Date
+  actualizadoEn   DateTime  @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  local Local @relation(fields: [localId], references: [id])
+
+  @@map("cuenta_local")
+}
+
+// ---------------------------------------------------------------------------
+// Enums de la Etapa 2
+// ---------------------------------------------------------------------------
+
+enum EstadoLocal {
+  pendiente_aprobacion
+  activo
+  en_plazo
+  bloqueado
+  suspendido
+
+  @@map("estado_local")
+}
+
+enum EstadoPedido {
+  pendiente_pago
+  en_proceso
+  completado
+  cancelado
+  reembolsado
+  expirado
+
+  @@map("estado_pedido")
+}
+
+enum EstadoSubPedido {
+  pendiente
+  preparando
+  enviado
+  entregado
+  en_disputa
+  cancelado
+  reembolsado
+  reembolsado_parcial
+
+  @@map("estado_sub_pedido")
+}
+
+enum EntregaConfirmadaPor {
+  comprador
+  vendedor
+  sistema
+
+  @@map("entrega_confirmada_por")
+}
+
+enum MetodoPago {
+  tarjeta
+  pse
+  nequi
+  efectivo
+  manual
+
+  @@map("metodo_pago")
+}
+
+enum TipoPago {
+  pedido
+  publicidad
+
+  @@map("tipo_pago")
+}
+
+enum EstadoPago {
+  pendiente
+  aprobado
+  rechazado
+  reembolsado
+  reembolsado_parcial
+
+  @@map("estado_pago")
+}
+
+enum ResultadoWebhook {
+  ok
+  ignorado
+  referencia_desconocida
+  firma_invalida
+
+  @@map("resultado_webhook")
+}
+
+enum EstadoIdempotencia {
+  en_proceso
+  completada
+
+  @@map("estado_idempotencia")
+}
+
+enum TipoReembolso {
+  digital
+  efectivo
+
+  @@map("tipo_reembolso")
+}
+
+enum EstadoReembolso {
+  pendiente
+  completado
+  incumplido
+  fallido
+
+  @@map("estado_reembolso")
+}
+
+enum TipoMovimiento {
+  venta
+  comision
+  reversa_comision
+  pago_recibido
+  cobro_deuda
+  pago_a_local
+  reembolso
+  ingreso_publicidad
+  ajuste
+  ajuste_redondeo
+
+  @@map("tipo_movimiento")
 }

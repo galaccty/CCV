@@ -183,7 +183,7 @@ describe('POST /api/v1/pedidos', () => {
     assert.equal(r.body.error.detalles.subtotal, 10000);
   });
 
-  test('rechaza productos de locales distintos en esta etapa', CON_BASE, async () => {
+  test('acepta productos de varios locales y calcula un sub_pedido por local', CON_BASE, async () => {
     const comprador = await crearUsuarioConSesion();
     const uno = await crearCatalogo({ precio: 20000n });
     const dos = await crearCatalogo({ precio: 20000n });
@@ -200,8 +200,89 @@ describe('POST /api/v1/pedidos', () => {
       { 'Idempotency-Key': claveUnica() },
     );
 
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(r.body.sub_pedidos.length, 2);
+    assert.equal(r.body.total, 84000);
+
+    const porLocal = new Map(
+      r.body.sub_pedidos.map((sub) => [sub.local_id, sub]),
+    );
+
+    for (const catalogo of [uno, dos]) {
+      const sub = porLocal.get(catalogo.local.id);
+      assert.ok(sub, `falta el sub_pedido del local ${catalogo.local.id}`);
+      assert.equal(sub.subtotal_productos, 40000);
+      assert.equal(sub.costo_envio, 2000);
+      assert.equal(sub.comision, 2000);
+      assert.equal(sub.total, 42000);
+      assert.equal(sub.detalles.length, 1);
+    }
+
+    const guardado = await prisma.pedido.findUnique({
+      where: { id: r.body.id },
+      include: { subPedidos: true },
+    });
+    assert.equal(
+      guardado.total,
+      guardado.subPedidos.reduce((suma, sub) => suma + sub.total, 0n),
+    );
+  });
+
+  test('aplica el pedido minimo por local aunque el total del pedido lo supere', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const grande = await crearCatalogo({ precio: 20000n });
+    const pequeno = await crearCatalogo({ precio: 10000n });
+
+    const r = await comprador.cliente.post(
+      '/api/v1/pedidos',
+      {
+        ...cuerpoCheckout(grande.variante.id, 2),
+        items: [
+          { variante_id: grande.variante.id, cantidad: 2 },
+          { variante_id: pequeno.variante.id, cantidad: 1 },
+        ],
+      },
+      { 'Idempotency-Key': claveUnica() },
+    );
+
+    assert.equal(r.status, 422, JSON.stringify(r.body));
+    assert.equal(r.body.error.codigo, 'pedido_minimo_no_alcanzado');
+    assert.equal(r.body.error.detalles.local_id, pequeno.local.id);
+    assert.equal(r.body.error.detalles.subtotal, 10000);
+    assert.equal(r.body.error.detalles.minimo, 30000);
+  });
+
+  test('un local en_plazo puede vender', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const { variante } = await crearCatalogo({
+      precio: 10000n,
+      estadoLocal: 'en_plazo',
+    });
+
+    const r = await comprador.cliente.post(
+      '/api/v1/pedidos',
+      cuerpoCheckout(variante.id, 3),
+      { 'Idempotency-Key': claveUnica() },
+    );
+
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+  });
+
+  test('un local bloqueado no puede vender', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const { variante } = await crearCatalogo({
+      precio: 10000n,
+      estadoLocal: 'bloqueado',
+    });
+
+    const r = await comprador.cliente.post(
+      '/api/v1/pedidos',
+      cuerpoCheckout(variante.id, 3),
+      { 'Idempotency-Key': claveUnica() },
+    );
+
     assert.equal(r.status, 422);
-    assert.equal(r.body.error.codigo, 'varios_locales_no_soportado');
+    assert.equal(r.body.error.codigo, 'variante_no_disponible');
   });
 
   test('rechaza una variante inactiva', CON_BASE, async () => {

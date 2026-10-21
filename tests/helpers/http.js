@@ -32,6 +32,10 @@ export function cliente() {
       return conCsrf(agente, 'patch', ruta, cuerpo);
     },
 
+    async put(ruta, cuerpo) {
+      return conCsrf(agente, 'put', ruta, cuerpo);
+    },
+
     async delete(ruta) {
       return conCsrf(agente, 'delete', ruta, undefined);
     },

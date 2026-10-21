@@ -9,7 +9,10 @@ import { opcionesConBase, prisma, cerrarConexion } from '../helpers/base.js';
 import { crearCatalogo } from '../helpers/datos.js';
 import { withTransaccion } from '../../src/lib/transaccion.js';
 import {
+  ajustarStock,
+  crearVariante,
   descontarStock,
+  ErrorAjusteStockNegativo,
   ErrorStockInsuficiente,
 } from '../../src/services/stock.js';
 
@@ -92,6 +95,40 @@ describe('invariante 7 - el stock solo se descuenta por el modulo de stock', () 
       where: { id: variante.id },
     });
     assert.equal(varianteDb.stock, 5);
+  });
+
+  test('el stock inicial y el ajuste por diferencia pasan por el modulo de stock', CON_BASE, async () => {
+    const { producto } = await crearCatalogo({ stockInicial: 1 });
+
+    const variante = await crearVariante(prisma, {
+      productoId: producto.id,
+      atributos: { talla: 'Ajuste' },
+      precio: 10000n,
+      stock: 8,
+    });
+    assert.equal(variante.stock, 8);
+
+    await ajustarStock(prisma, variante.id, 5);
+    let actual = await prisma.productoVariante.findUnique({
+      where: { id: variante.id },
+    });
+    assert.equal(actual.stock, 13);
+
+    await ajustarStock(prisma, variante.id, -3);
+    actual = await prisma.productoVariante.findUnique({
+      where: { id: variante.id },
+    });
+    assert.equal(actual.stock, 10);
+
+    await assert.rejects(
+      () => ajustarStock(prisma, variante.id, -11),
+      ErrorAjusteStockNegativo,
+    );
+
+    actual = await prisma.productoVariante.findUnique({
+      where: { id: variante.id },
+    });
+    assert.equal(actual.stock, 10, 'un ajuste rechazado no cambia el stock');
   });
 
   test('la base rechaza un stock negativo', CON_BASE, async () => {

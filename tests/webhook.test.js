@@ -101,9 +101,14 @@ async function crearPagoPendiente({
   cantidad = 3,
   stockInicial = 10,
   precio = 10000n,
+  estadoLocal = 'activo',
 } = {}) {
   const comprador = await crearUsuarioConSesion();
-  const { variante, local } = await crearCatalogo({ precio, stockInicial });
+  const { variante, local } = await crearCatalogo({
+    precio,
+    stockInicial,
+    estadoLocal,
+  });
 
   const checkout = await comprador.cliente.post(
     '/api/v1/pedidos',
@@ -632,5 +637,161 @@ describe('POST /api/v1/pagos/webhook', () => {
     });
     assert.equal(eventos.length, 2);
     assert.equal(eventos.every((e) => e.procesado && e.resultado === 'ok'), true);
+  });
+
+  test('un local en_plazo puede confirmar el pago y descontar stock', CON_BASE, async () => {
+    const { variante, pago, montoEnCentavos } = await crearPagoPendiente({
+      estadoLocal: 'en_plazo',
+    });
+    const idTransaccion = `tx-${claveUnica()}`;
+
+    registrarTransaccionFalsa({
+      id: idTransaccion,
+      reference: pago.referencia,
+      status: 'APPROVED',
+      amountInCents: montoEnCentavos,
+    });
+
+    const evento = crearEvento({
+      id: idTransaccion,
+      reference: pago.referencia,
+      amountInCents: montoEnCentavos,
+    });
+
+    const r = await enviarEvento(evento);
+
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.resultado, 'ok');
+
+    const varianteDb = await prisma.productoVariante.findUnique({
+      where: { id: variante.id },
+    });
+    assert.equal(varianteDb.stock, 7);
+  });
+
+  test('vacía del carrito solo las unidades compradas cuando el pago se aprueba', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const { variante } = await crearCatalogo({
+      precio: 10000n,
+      stockInicial: 10,
+    });
+
+    const carrito = await comprador.cliente.put(
+      `/api/v1/carrito/items/${variante.id}`,
+      { cantidad: 3 },
+    );
+    assert.equal(carrito.status, 200, JSON.stringify(carrito.body));
+
+    const checkout = await comprador.cliente.post(
+      '/api/v1/pedidos',
+      {
+        direccion: {
+          texto: 'Calle 1 # 2-3, Bogota',
+          latitud: 4.65,
+          longitud: -74.05,
+        },
+        metodo_pago: 'tarjeta',
+        items: [{ variante_id: variante.id, cantidad: 3 }],
+      },
+      { 'Idempotency-Key': claveUnica('checkout-carrito') },
+    );
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+
+    const pagoResp = await comprador.cliente.post(
+      `/api/v1/pedidos/${checkout.body.id}/pagos`,
+      undefined,
+      { 'Idempotency-Key': claveUnica('pago-carrito') },
+    );
+    assert.equal(pagoResp.status, 201, JSON.stringify(pagoResp.body));
+
+    const idTransaccion = `tx-${claveUnica()}`;
+    const montoEnCentavos = BigInt(
+      pagoResp.body.checkout.monto_en_centavos,
+    );
+
+    registrarTransaccionFalsa({
+      id: idTransaccion,
+      reference: pagoResp.body.pago.referencia,
+      status: 'APPROVED',
+      amountInCents: montoEnCentavos,
+    });
+
+    const evento = crearEvento({
+      id: idTransaccion,
+      reference: pagoResp.body.pago.referencia,
+      amountInCents: montoEnCentavos,
+    });
+
+    const r = await enviarEvento(evento);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const carritoDb = await prisma.carrito.findUnique({
+      where: { usuarioId: comprador.id },
+      include: { items: true },
+    });
+    assert.equal(carritoDb.items.length, 0);
+  });
+
+  test('un pago rechazado no vacía el carrito', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const { variante } = await crearCatalogo({
+      precio: 10000n,
+      stockInicial: 10,
+    });
+
+    await comprador.cliente.put(`/api/v1/carrito/items/${variante.id}`, {
+      cantidad: 3,
+    });
+
+    const checkout = await comprador.cliente.post(
+      '/api/v1/pedidos',
+      {
+        direccion: {
+          texto: 'Calle 1 # 2-3, Bogota',
+          latitud: 4.65,
+          longitud: -74.05,
+        },
+        metodo_pago: 'tarjeta',
+        items: [{ variante_id: variante.id, cantidad: 3 }],
+      },
+      { 'Idempotency-Key': claveUnica('checkout-rechazado') },
+    );
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+
+    const pagoResp = await comprador.cliente.post(
+      `/api/v1/pedidos/${checkout.body.id}/pagos`,
+      undefined,
+      { 'Idempotency-Key': claveUnica('pago-rechazado') },
+    );
+    assert.equal(pagoResp.status, 201, JSON.stringify(pagoResp.body));
+
+    const idTransaccion = `tx-${claveUnica()}`;
+    const montoEnCentavos = BigInt(
+      pagoResp.body.checkout.monto_en_centavos,
+    );
+
+    registrarTransaccionFalsa({
+      id: idTransaccion,
+      reference: pagoResp.body.pago.referencia,
+      status: 'DECLINED',
+      amountInCents: montoEnCentavos,
+    });
+
+    const evento = crearEvento({
+      id: idTransaccion,
+      reference: pagoResp.body.pago.referencia,
+      status: 'DECLINED',
+      amountInCents: montoEnCentavos,
+    });
+
+    const r = await enviarEvento(evento);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const carritoDb = await prisma.carrito.findUnique({
+      where: { usuarioId: comprador.id },
+      include: { items: true },
+    });
+    assert.equal(carritoDb.items.length, 1);
+    assert.equal(carritoDb.items[0].cantidad, 3);
   });
 });

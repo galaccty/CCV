@@ -30,9 +30,9 @@ import {
 
 export const ESTADO = estadoInvariante({
   aplica: 'parcial',
-  etapa: 'Etapa 4',
+  etapa: 'Etapa 6',
   motivo:
-    'pedido, pago, reembolso, sub_pedido, detalle, ledger y cuenta_local ya se protegen. Faltan productos y la retencion.',
+    'pedido, pago, reembolso, sub_pedido, detalle, ledger, cuenta_local y productos ya se protegen. Falta la retencion de datos.',
 });
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -59,6 +59,9 @@ const REGLA_BORRADO_FINANCIERO = new RegExp(
   String.raw`(pedido|pago|reembolso|ledger|subPedido|sub_pedido|detalleProducto|detalle_producto|cuentaLocal|cuenta_local)\s*\.\s*(delete|deleteMany)\b|DELETE\s+FROM\s+"?(${TABLAS_FINANCIERAS})"?`,
   'i',
 );
+
+const REGLA_BORRADO_PRODUCTO =
+  /\bproducto\s*\.\s*(delete|deleteMany)\b|DELETE\s+FROM\s+"?producto"?/i;
 
 function buscarEnCodigo(regla) {
   const violaciones = [];
@@ -196,13 +199,22 @@ describe('invariante 11 - nada financiero se borra', () => {
     assert.ok(sigue, 'la cuenta debe seguir existiendo');
   });
 
-  test(
-    'los productos se desactivan, no se borran',
-    pendiente('Etapa 3', 'la gestion de productos llega en la Etapa 3'),
-    () => {
-      assert.ok(true);
-    },
-  );
+  test('los productos se desactivan, no se borran', CON_BASE, async () => {
+    const { producto } = await crearCatalogo();
+    const violaciones = buscarEnCodigo(REGLA_BORRADO_PRODUCTO);
+    assert.deepEqual(violaciones, []);
+
+    await prisma.producto.update({
+      where: { id: producto.id },
+      data: { activo: false },
+    });
+
+    const sigue = await prisma.producto.findUnique({
+      where: { id: producto.id },
+    });
+    assert.ok(sigue);
+    assert.equal(sigue.activo, false);
+  });
 
   test(
     'evento_webhook, vistas y pedidos expirados tienen retencion definida',

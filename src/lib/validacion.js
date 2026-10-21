@@ -75,3 +75,59 @@ export const esquemaRestablecer = z.object({
 export const esquemaVerificarEmail = z.object({
   token: z.string().min(10, 'El token es obligatorio.'),
 });
+
+// ---------------------------------------------------------------------------
+// Esquemas de validacion de la Etapa 2
+// ---------------------------------------------------------------------------
+
+export const ESTADOS_SUB_PEDIDO = [
+  'pendiente',
+  'preparando',
+  'enviado',
+  'entregado',
+  'en_disputa',
+  'cancelado',
+  'reembolsado',
+  'reembolsado_parcial',
+];
+
+export const esquemaIdPositivo = z.coerce.number().int().positive();
+
+/**
+ * El checkout solo acepta variante_id y cantidad. Cualquier monto que mande el
+ * cliente (precio, subtotal, total, comision) se descarta: Zod solo deja las
+ * claves declaradas.
+ */
+export const esquemaCheckout = z.object({
+  direccion: z.object({
+    texto: z.string().trim().min(5, 'La direccion es obligatoria.').max(500),
+    latitud: z.coerce.number().min(-90).max(90),
+    longitud: z.coerce.number().min(-180).max(180),
+  }),
+  metodo_pago: z.enum(['tarjeta', 'pse', 'nequi'], {
+    errorMap: () => ({
+      message: 'El metodo de pago debe ser tarjeta, pse o nequi.',
+    }),
+  }),
+  items: z
+    .array(
+      z.object({
+        variante_id: z.coerce.number().int().positive(),
+        cantidad: z.coerce.number().int().min(1).max(999),
+      }),
+    )
+    .min(1, 'El pedido necesita al menos un producto.')
+    .max(50, 'El pedido no puede tener mas de 50 lineas.'),
+});
+
+export const esquemaEnviarSubPedido = z.object({
+  evidencia_envio: z
+    .string()
+    .trim()
+    .min(1, 'La evidencia de envio es obligatoria.')
+    .max(2000),
+});
+
+export const esquemaListaSubPedidos = z.object({
+  estado: z.enum(ESTADOS_SUB_PEDIDO).optional(),
+});

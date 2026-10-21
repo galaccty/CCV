@@ -83,7 +83,13 @@ describe('invariante 4 - Wompi nunca se llama dentro de una transaccion', () => 
     );
   });
 
-  test('capa (a): el cliente de Wompi solo se importa en su modulo', () => {
-    assert.deepEqual(ARCHIVOS_PERMITIDOS[4], ['src/lib/wompi.js']);
+  test('capa (a): solo el modulo de Wompi y el servicio de pagos pueden importarlo', () => {
+    // En la Etapa 2 el servicio de pagos necesita calcular la firma del
+    // checkout y consultar transacciones. La lista blanca se amplia a ese
+    // archivo, no a toda la aplicacion. El guardian en ejecucion sigue igual.
+    assert.deepEqual(ARCHIVOS_PERMITIDOS[4], [
+      'src/lib/wompi.js',
+      'src/services/pagos.js',
+    ]);
   });
 });

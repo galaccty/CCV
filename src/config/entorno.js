@@ -24,6 +24,17 @@ const esquemaConfig = z.object({
   MAIL_DRIVER: z.enum(['consola', 'ninguno']).default('consola'),
   MAIL_FROM: z.string().default('no-reply@tudominio.co'),
   MAIL_PROVEEDOR_API_KEY: z.string().optional().default(''),
+
+  // Wompi. Hasta que existan las llaves de sandbox se usa el proveedor falso:
+  // no hace ninguna llamada HTTP y permite probar el corte vertical completo.
+  WOMPI_PROVEEDOR: z.enum(['falso', 'real']).default('falso'),
+  WOMPI_PUB_KEY: z.string().optional().default(''),
+  WOMPI_PRV_KEY: z.string().optional().default(''),
+  WOMPI_EVENTS_KEY: z.string().optional().default(''),
+  WOMPI_INTEGRITY_KEY: z.string().optional().default(''),
+  WOMPI_API_BASE: z.string().url().default('https://sandbox.wompi.co/v1'),
+  WOMPI_CHECKOUT_BASE: z.string().url().default('https://checkout.wompi.co/p/'),
+  WOMPI_REDIRECT_URL: z.string().optional().default(''),
 });
 
 const resultado = esquemaConfig.safeParse(process.env);

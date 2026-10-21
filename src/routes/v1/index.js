@@ -1,5 +1,9 @@
 import { Router } from 'express';
 import authRouter from './auth.js';
+import pedidosRouter from './pedidos.js';
+import pagosRouter from './pagos.js';
+import vendedorRouter from './vendedor.js';
+import subPedidosRouter from './subPedidos.js';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 
@@ -46,5 +50,12 @@ router.get('/csrf', (req, res) => {
 });
 
 router.use('/auth', authRouter);
+
+// Etapa 2: pedidos, pagos (incluye el webhook), panel del vendedor y
+// transiciones del sub-pedido.
+router.use('/pedidos', pedidosRouter);
+router.use(pagosRouter);
+router.use('/vendedor', vendedorRouter);
+router.use('/sub-pedidos', subPedidosRouter);
 
 export default router;

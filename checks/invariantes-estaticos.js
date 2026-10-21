@@ -43,7 +43,11 @@ const EXTENSIONES = new Set(['.js', '.mjs', '.cjs', '.ts', '.mts']);
 export const ARCHIVOS_PERMITIDOS = {
   1: ['src/services/ledger.js'],
   7: ['src/services/stock.js'],
-  4: ['src/lib/wompi.js'],
+  // El servicio de pagos es el UNICO que puede importar el cliente de Wompi.
+  // El cliente sigue exigiendo, en tiempo de ejecucion, que la llamada ocurra
+  // fuera de una transaccion. El webhook usa los metodos que pagos.js
+  // reexporta, no importa lib/wompi.js directamente.
+  4: ['src/lib/wompi.js', 'src/services/pagos.js'],
 };
 
 /**
@@ -54,6 +58,18 @@ export const ARCHIVOS_PERMITIDOS = {
 function autorizadoComoPruebaDeInvariante(invariante, rutaRelativa) {
   return rutaRelativa.includes(`invariante_0${invariante}_`);
 }
+
+/**
+ * Archivos que necesitan escribir `cuenta_local` a mano para comprobar que
+ * Postgres rechaza la operacion (CHECK de saldos y trigger de borrado). No son
+ * codigo de produccion: su unico fin es intentar violar la restriccion. Se
+ * excluyen solo del chequeo del invariante 1; el resto de sus lineas sigue
+ * pasando por los demas chequeos.
+ */
+const PRUEBAS_QUE_VIOLAN_CUENTA_LOCAL = new Set([
+  'tests/integridad.test.js',
+  'tests/invariantes/invariante_11_nada_financiero_se_borra.test.js',
+]);
 
 // ---------------------------------------------------------------------------
 // Reglas de deteccion
@@ -176,7 +192,8 @@ export function ejecutarChequeos() {
         { patron: REGLA_ORM_SALDO, como: 'escritura por el ORM sobre cuenta_local' },
         { patron: REGLA_ASIGNACION_SALDO, como: 'asignacion directa a una columna de saldo' },
       ],
-      exclusiones: () => false,
+      exclusiones: (relativa) =>
+        PRUEBAS_QUE_VIOLAN_CUENTA_LOCAL.has(relativa),
     }),
 
     revisarInvariante({

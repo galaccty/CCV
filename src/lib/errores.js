@@ -57,6 +57,64 @@ export function manejadorNoEncontrado(req, res) {
   });
 }
 
+const CODIGOS_PRISMA = {
+  P2002: ['recurso_duplicado', 409, 'Ya existe un registro con esos datos.'],
+  P2003: ['referencia_invalida', 409, 'El registro hace referencia a algo que no existe.'],
+  P2025: ['no_encontrado', 404, 'No se encontro el registro.'],
+};
+
+/**
+ * Traduce cualquier error a la respuesta JSON de la seccion 6.
+ * Lo usan el manejador global y el middleware de idempotencia (que necesita
+ * guardar la MISMA respuesta que recibira el cliente cuando el error es 4xx).
+ */
+export function describirError(err) {
+  if (err instanceof ErrorApi) {
+    return {
+      estado: err.estado,
+      cuerpo: {
+        error: {
+          codigo: err.codigo,
+          mensaje: err.message,
+          ...(err.detalles ? { detalles: err.detalles } : {}),
+        },
+      },
+    };
+  }
+
+  if (err?.name === 'ZodError') {
+    return {
+      estado: 400,
+      cuerpo: {
+        error: {
+          codigo: 'validacion_invalida',
+          mensaje: 'Los datos enviados no son validos.',
+          detalles: err.issues.map((i) => ({
+            campo: i.path.join('.'),
+            problema: i.message,
+          })),
+        },
+      },
+    };
+  }
+
+  const prisma = err?.code ? CODIGOS_PRISMA[err.code] : undefined;
+  if (prisma) {
+    const [codigo, estado, mensaje] = prisma;
+    return { estado, cuerpo: { error: { codigo, mensaje } } };
+  }
+
+  return {
+    estado: 500,
+    cuerpo: {
+      error: {
+        codigo: 'error_interno',
+        mensaje: 'Ocurrio un error inesperado. Intenta de nuevo.',
+      },
+    },
+  };
+}
+
 /**
  * Manejador global de errores.
  * - Si el error es nuestro (ErrorApi), responde con su codigo.
@@ -73,42 +131,11 @@ export function manejadorErrores(err, req, res, _next) {
     } else {
       logger.warn({ codigo: err.codigo, mensaje: err.message }, 'error controlado');
     }
-    return res.status(err.estado).json({
-      error: { codigo: err.codigo, mensaje: err.message, ...(err.detalles ? { detalles: err.detalles } : {}) },
-    });
+  } else if (err?.name !== 'ZodError' && !(err?.code && CODIGOS_PRISMA[err.code])) {
+    // Cualquier otra cosa: 500 sin filtrar detalles internos.
+    logger.error({ err, ruta: `${req.method} ${req.path}` }, 'error no controlado');
   }
 
-  // Errores de validacion de Zod
-  if (err?.name === 'ZodError') {
-    return res.status(400).json({
-      error: {
-        codigo: 'validacion_invalida',
-        mensaje: 'Los datos enviados no son validos.',
-        detalles: err.issues.map((i) => ({
-          campo: i.path.join('.'),
-          problema: i.message,
-        })),
-      },
-    });
-  }
-
-  // Errores conocidos de Prisma
-  const codigosPrisma = {
-    P2002: ['recurso_duplicado', 409, 'Ya existe un registro con esos datos.'],
-    P2003: ['referencia_invalida', 409, 'El registro hace referencia a algo que no existe.'],
-    P2025: ['no_encontrado', 404, 'No se encontro el registro.'],
-  };
-  if (err?.code && codigosPrisma[err.code]) {
-    const [codigo, estado, mensaje] = codigosPrisma[err.code];
-    return res.status(estado).json({ error: { codigo, mensaje } });
-  }
-
-  // Cualquier otra cosa: 500 sin filtrar detalles internos.
-  logger.error({ err, ruta: `${req.method} ${req.path}` }, 'error no controlado');
-  return res.status(500).json({
-    error: {
-      codigo: 'error_interno',
-      mensaje: 'Ocurrio un error inesperado. Intenta de nuevo.',
-    },
-  });
+  const { estado, cuerpo } = describirError(err);
+  return res.status(estado).json(cuerpo);
 }

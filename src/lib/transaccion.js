@@ -23,7 +23,12 @@ import { prisma } from './prisma.js';
  */
 export const contextoTransaccion = new AsyncLocalStorage();
 
-/** Devuelve el cliente de transaccion si estamos dentro de una, si no null. */
+/**
+ * Devuelve el contexto de la transaccion si estamos dentro de una, si no null.
+ * El contexto incluye `tx`, el cliente que ve los cambios sin commitear. El
+ * ledger lo usa para exigir que cada movimiento se escriba en la misma
+ * transaccion que actualiza los saldos.
+ */
 export function transaccionActual() {
   return contextoTransaccion.getStore() ?? null;
 }
@@ -52,7 +57,7 @@ export function exigirFueraDeTransaccion(nombreServicio) {
  */
 export function withTransaccion(fn) {
   return prisma.$transaction(async (tx) => {
-    return contextoTransaccion.run({ abierto: true }, () => fn(tx));
+    return contextoTransaccion.run({ abierto: true, tx }, () => fn(tx));
   });
 }
 

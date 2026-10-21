@@ -7,6 +7,7 @@ import { cargarSesion } from './middlewares/sesion.js';
 import { proteccionCsrf } from './middlewares/csrf.js';
 import { limiteGeneral } from './middlewares/rateLimit.js';
 import { jsonBigInt } from './middlewares/jsonBigInt.js';
+import { finalizarIdempotencia } from './middlewares/idempotencia.js';
 import rutas from './routes/index.js';
 
 /**
@@ -64,10 +65,19 @@ export function crearApp() {
 
   // El token anti-CSRF va tambien antes de las rutas, para que la cookie
   // exista desde la primera peticion que haga el frontend.
-  // La lista de rutas exentas se llena cuando exista el webhook de Wompi.
-  app.use(proteccionCsrf({ exentas: [] }));
+  // El webhook de Wompi entra sin cookie y sin CSRF: se autentica con la
+  // firma del proveedor, que se verifica en services/webhooks.js.
+  app.use(
+    proteccionCsrf({
+      exentas: ['/api/v1/pagos/webhook'],
+    }),
+  );
 
   app.use('/api', limiteGeneral, rutas);
+
+  // Cierra la reserva de idempotencia (4xx se guarda, 5xx se libera) antes de
+  // que el manejador global escriba la respuesta.
+  app.use(finalizarIdempotencia);
 
   app.use(manejadorNoEncontrado);
   app.use(manejadorErrores);

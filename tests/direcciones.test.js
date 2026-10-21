@@ -3,6 +3,7 @@ import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { opcionesConBase, prisma, cerrarConexion } from './helpers/base.js';
 import { cliente, crearUsuarioConSesion } from './helpers/http.js';
+import { crearCatalogo } from './helpers/datos.js';
 
 /**
  * DIRECCIONES DEL COMPRADOR - ETAPA 3B
@@ -22,6 +23,10 @@ const DIRECCION = {
   latitud: 4.65,
   longitud: -74.05,
 };
+
+function claveUnica() {
+  return `direccion-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 describe('CRUD de direcciones', () => {
   test('exige sesion', CON_BASE, async () => {
@@ -166,6 +171,62 @@ describe('CRUD de direcciones', () => {
       {},
     );
     assert.equal(cuerpoVacio.status, 400);
+  });
+
+  test('el pedido guarda una copia propia y borrar la direccion no lo cambia', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const catalogo = await crearCatalogo({ precio: 10000n, stockInicial: 10 });
+
+    const direccion = await comprador.cliente.post('/api/v1/direcciones', {
+      texto: 'Calle 99 # 10-20, Bogota',
+      latitud: 4.7,
+      longitud: -74.1,
+    });
+    assert.equal(direccion.status, 201);
+
+    const checkout = await comprador.cliente.post(
+      '/api/v1/pedidos',
+      {
+        direccion: {
+          texto: direccion.body.texto,
+          latitud: direccion.body.latitud,
+          longitud: direccion.body.longitud,
+        },
+        metodo_pago: 'tarjeta',
+        items: [{ variante_id: catalogo.variante.id, cantidad: 3 }],
+      },
+      { 'Idempotency-Key': claveUnica() },
+    );
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    assert.deepEqual(checkout.body.direccion, {
+      texto: 'Calle 99 # 10-20, Bogota',
+      latitud: 4.7,
+      longitud: -74.1,
+    });
+
+    const borrar = await comprador.cliente.delete(
+      `/api/v1/direcciones/${direccion.body.id}`,
+    );
+    assert.equal(borrar.status, 204);
+
+    const direccionGuardada = await prisma.direccion.findUnique({
+      where: { id: direccion.body.id },
+    });
+    assert.equal(direccionGuardada, null);
+
+    const pedido = await comprador.cliente.get(
+      `/api/v1/pedidos/${checkout.body.id}`,
+    );
+    assert.equal(pedido.status, 200);
+    assert.deepEqual(pedido.body.direccion, checkout.body.direccion);
+    assert.equal(pedido.body.total, checkout.body.total);
+
+    const pedidoGuardado = await prisma.pedido.findUnique({
+      where: { id: checkout.body.id },
+    });
+    assert.equal(pedidoGuardado.direccionTexto, 'Calle 99 # 10-20, Bogota');
+    assert.equal(pedidoGuardado.direccionLatitud, 4.7);
+    assert.equal(pedidoGuardado.direccionLongitud, -74.1);
   });
 
   test('la base impide dos direcciones principales para el mismo usuario', CON_BASE, async () => {

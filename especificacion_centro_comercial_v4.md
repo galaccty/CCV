@@ -37,7 +37,7 @@ Todos los montos en pesos, como enteros.
 - **usuario**: id, nombre, email, email_verificado, password_hash (bcrypt), acepto_terminos, fecha_aceptacion.
 - **usuario_rol**: usuario_id, rol (comprador / vendedor / admin).
 - **token_verificacion**: usuario_id, tipo (verificar_email / reset_password), token_hash, expira, usado.
-- **direccion**: id, usuario_id, texto, latitud, longitud.
+- **direccion**: id, usuario_id, texto, latitud, longitud, principal (una sola principal por usuario).
 - **rubro**: id, nombre (lista corta que administra el admin).
 - **local**: id, usuario_id, rubro_id, nombre, logo_url, banner_fondo_url, latitud, longitud, estado (pendiente_aprobacion / activo / en_plazo / bloqueado / suspendido), promedio_calificacion, total_calificaciones. Todo local nuevo nace en pendiente_aprobacion.
 - **categoria_global**: id, nombre, padre_id, rubro_id opcional (la administra el admin).
@@ -198,6 +198,14 @@ Un CHECK de Postgres solo ve una fila. Estas reglas se hacen cumplir en la capa 
 - al crear un producto, categoria_global.rubro_id es nulo o igual a local.rubro_id
 
 Debe existir un test explícito que intente violar cada una.
+
+### 4.14 Direcciones, cotización y CORS
+
+- **Direcciones:** el comprador puede crear, listar, editar, eliminar y marcar una dirección como principal. Solo puede ver y modificar las propias. La primera dirección creada queda como principal automáticamente. Si se elimina la principal, no se promueve otra automáticamente; el comprador debe marcar una. La base impone una sola dirección principal por usuario con un índice único parcial.
+- **Origen de las coordenadas:** las coordenadas (`latitud`, `longitud`) llegan del frontend. El backend no geocodifica ni elige proveedor; solo valida el rango aproximado de Colombia. Cualquier geocodificación se decidirá en una etapa posterior y deberá documentarse antes de implementarse.
+- **Cotización:** `POST /api/v1/carrito/cotizar` calcula por local subtotal de productos, envío por distancia, pedido mínimo y total. No crea pedido, no reserva ni descuenta stock. El carrito y los precios se leen de la base; los montos del cliente se ignoran.
+- **Detalle público:** `GET /api/v1/productos/{id}` solo muestra productos y locales que pueden vender. Expone `disponible` (hay o no hay) por variante, no la cantidad exacta de inventario.
+- **CORS:** el backend usa una lista de orígenes permitidos configurada por `CORS_ORIGINS`. El origen del frontend se refleja exactamente en `Access-Control-Allow-Origin`, con `Access-Control-Allow-Credentials: true`; no se permite `*` cuando hay credenciales. Los preflight `OPTIONS` se responden antes del CSRF y del rate limit. La cookie de sesión sigue siendo `HttpOnly` y `SameSite=Lax`; la cookie CSRF es legible por JavaScript y también usa `SameSite=Lax`.
 
 ## 5. Búsqueda, notificaciones y home
 

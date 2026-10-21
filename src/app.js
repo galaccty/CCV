@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import { logger } from './lib/logger.js';
 import { manejadorErrores, manejadorNoEncontrado } from './lib/errores.js';
 import { cargarSesion } from './middlewares/sesion.js';
+import { corsCredenciales } from './middlewares/cors.js';
 import { proteccionCsrf } from './middlewares/csrf.js';
 import { limiteGeneral } from './middlewares/rateLimit.js';
 import { jsonBigInt } from './middlewares/jsonBigInt.js';
@@ -30,6 +31,10 @@ export function crearApp() {
       crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   );
+
+  // Antes del body parser, del rate limit y de CSRF: un preflight no lleva
+  // cuerpo ni cookies. Solo el origen configurado recibe credenciales.
+  app.use(corsCredenciales());
 
   app.use(express.json({ limit: '100kb' }));
   app.use(express.urlencoded({ extended: false }));

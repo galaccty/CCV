@@ -188,10 +188,77 @@ function revisarInvariante({ invariante, nombre, reglas, exclusiones }) {
  * una ventana de líneas alrededor de la escritura y exige que aparezca la
  * columna `stock`. Las creaciones de variantes se marcan siempre, porque el
  * stock inicial también debe pasar por el módulo.
+ *
+ * Se exporta el analizador puro para que las pruebas puedan demostrar que el
+ * guardián realmente falla ante una escritura simulada, sin crear archivos
+ * temporales dentro del repositorio.
  */
-function revisarInvariante7() {
+export function analizarInvariante7(contenido, rutaRelativa = 'archivo-simulado.js') {
+  if (listaBlanca(7, rutaRelativa)) return [];
+
+  const lineas = Array.isArray(contenido)
+    ? contenido
+    : String(contenido).split(/\r?\n/);
   const violaciones = [];
   const NOMBRE = 'El stock solo lo escribe el modulo de stock';
+
+  for (let indice = 0; indice < lineas.length; indice += 1) {
+    const linea = lineas[indice];
+    if (esComentario(linea)) continue;
+
+    const ventana = lineas.slice(indice, indice + 30).join('\n');
+    const ventanaSql = lineas.slice(indice, indice + 6).join('\n');
+    const escrituraOrm = linea.match(REGLA_ORM_STOCK);
+    const escrituraSql = linea.match(REGLA_SQL_STOCK);
+    const asignacionDirecta = REGLA_ASIGNACION_STOCK.test(linea);
+
+    if (escrituraOrm) {
+      const metodo = escrituraOrm[2].toLowerCase();
+      const creaVariante = ['create', 'createmany', 'upsert'].includes(metodo);
+      const escribeStock = /\bstock\s*:/.test(ventana);
+
+      if (creaVariante || escribeStock) {
+        violaciones.push({
+          invariante: 7,
+          nombre: NOMBRE,
+          archivo: rutaRelativa,
+          linea: indice + 1,
+          como: 'escritura por el ORM sobre producto_variante',
+          texto: linea.trim().slice(0, 100),
+        });
+        continue;
+      }
+    }
+
+    if (escrituraSql && /\bstock\b/i.test(ventanaSql)) {
+      violaciones.push({
+        invariante: 7,
+        nombre: NOMBRE,
+        archivo: rutaRelativa,
+        linea: indice + 1,
+        como: 'escritura SQL sobre producto_variante.stock',
+        texto: linea.trim().slice(0, 100),
+      });
+      continue;
+    }
+
+    if (asignacionDirecta) {
+      violaciones.push({
+        invariante: 7,
+        nombre: NOMBRE,
+        archivo: rutaRelativa,
+        linea: indice + 1,
+        como: 'asignacion directa a stock',
+        texto: linea.trim().slice(0, 100),
+      });
+    }
+  }
+
+  return violaciones;
+}
+
+function revisarInvariante7() {
+  const violaciones = [];
 
   for (const carpeta of CARPETAS_REVISADAS) {
     const absoluta = path.join(RAIZ, carpeta);
@@ -199,60 +266,7 @@ function revisarInvariante7() {
 
     for (const archivo of recorrer(absoluta)) {
       const relativa = path.relative(RAIZ, archivo).replace(/\\/g, '/');
-      if (listaBlanca(7, relativa)) continue;
-
-      const lineas = lineasDe(archivo);
-      for (let indice = 0; indice < lineas.length; indice += 1) {
-        const linea = lineas[indice];
-        if (esComentario(linea)) continue;
-
-        const ventana = lineas.slice(indice, indice + 30).join('\n');
-        const ventanaSql = lineas.slice(indice, indice + 6).join('\n');
-        const escrituraOrm = linea.match(REGLA_ORM_STOCK);
-        const escrituraSql = linea.match(REGLA_SQL_STOCK);
-        const asignacionDirecta = REGLA_ASIGNACION_STOCK.test(linea);
-
-        if (escrituraOrm) {
-          const metodo = escrituraOrm[2].toLowerCase();
-          const creaVariante = ['create', 'createmany', 'upsert'].includes(metodo);
-          const escribeStock = /\bstock\s*:/.test(ventana);
-
-          if (creaVariante || escribeStock) {
-            violaciones.push({
-              invariante: 7,
-              nombre: NOMBRE,
-              archivo: relativa,
-              linea: indice + 1,
-              como: 'escritura por el ORM sobre producto_variante',
-              texto: linea.trim().slice(0, 100),
-            });
-            continue;
-          }
-        }
-
-        if (escrituraSql && /\bstock\b/i.test(ventanaSql)) {
-          violaciones.push({
-            invariante: 7,
-            nombre: NOMBRE,
-            archivo: relativa,
-            linea: indice + 1,
-            como: 'escritura SQL sobre producto_variante.stock',
-            texto: linea.trim().slice(0, 100),
-          });
-          continue;
-        }
-
-        if (asignacionDirecta) {
-          violaciones.push({
-            invariante: 7,
-            nombre: NOMBRE,
-            archivo: relativa,
-            linea: indice + 1,
-            como: 'asignacion directa a stock',
-            texto: linea.trim().slice(0, 100),
-          });
-        }
-      }
+      violaciones.push(...analizarInvariante7(lineasDe(archivo), relativa));
     }
   }
 

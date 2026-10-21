@@ -2,6 +2,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  analizarInvariante7,
   ejecutarChequeos,
   ARCHIVOS_PERMITIDOS,
 } from '../../checks/invariantes-estaticos.js';
@@ -47,6 +48,41 @@ describe('invariante 7 - el stock solo se descuenta por el modulo de stock', () 
 
   test('la lista blanca del invariante 7 permite solo al modulo de stock', () => {
     assert.deepEqual(ARCHIVOS_PERMITIDOS[7], ['src/services/stock.js']);
+  });
+
+  test('el guardian falla ante una escritura de stock simulada fuera del modulo', () => {
+    const contenido = [
+      'export async function romper(prisma) {',
+      '  await prisma.productoVariante.update({',
+      '    where: { id: 1 },',
+      '    data: { stock: 3 },',
+      '  });',
+      '}',
+    ].join('\n');
+
+    const violaciones = analizarInvariante7(
+      contenido,
+      'src/services/escritura-prohibida.js',
+    );
+
+    assert.equal(violaciones.length, 1);
+    assert.equal(violaciones[0].invariante, 7);
+    assert.equal(violaciones[0].archivo, 'src/services/escritura-prohibida.js');
+    assert.match(violaciones[0].como, /ORM/);
+  });
+
+  test('el guardian permite cambiar precio y estado de una variante', () => {
+    const contenido = [
+      'await prisma.productoVariante.update({',
+      '  where: { id },',
+      '  data: { precio: 12000, activo: false },',
+      '});',
+    ].join('\n');
+
+    assert.deepEqual(
+      analizarInvariante7(contenido, 'src/services/catalogo.js'),
+      [],
+    );
   });
 
   test('diez descuentos simultaneos sobre stock 5 dejan exactamente cinco', CON_BASE, async () => {

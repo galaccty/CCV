@@ -2,11 +2,12 @@
 
 Backend del marketplace multi-vendedor. Node.js + Express + PostgreSQL.
 
-**Estado: Etapa 3 (backend) implementada y verificada en modo de pruebas.**
+**Estado: Etapa 3b (backend) implementada y verificada en modo de pruebas.**
 Incluye el corte vertical de la Etapa 2 y, encima, rubros/categorías globales,
 varios locales por vendedor, variantes, catálogo público, carrito multi-local,
-ajuste de stock por diferencia, envío por distancia y pedido mínimo por local.
-El frontend de la Etapa 3 se hará en otro repositorio.
+cotización de envío, direcciones del comprador, ajuste de stock por diferencia,
+envío por distancia y pedido mínimo por local. El frontend de la Etapa 3 se hará
+en otro repositorio.
 
 El proveedor de Wompi es falso por defecto: no hace llamadas HTTP y permite
 probar checkout, pago, webhook, stock y ledger completos. La integración real
@@ -287,7 +288,7 @@ Cuando exista el frontend, esto lo resuelve la librería de peticiones.
 | `npm run crear-admin` | Crea o actualiza el administrador del `.env` |
 | `npm run probar-registro` | Hace un registro completo de punta a punta |
 
-### 5.1 Rutas de la Etapa 3
+### 5.1 Rutas de la Etapa 3b
 
 Todas van bajo `/api/v1`. El contrato completo está en `openapi.yaml`.
 
@@ -298,10 +299,15 @@ Todas van bajo `/api/v1`. El contrato completo está en `openapi.yaml`.
 | GET | `/locales?rubro_id=&categoria_global_id=&pagina=&por_pagina=` | público |
 | GET | `/locales/{id}` | público |
 | GET | `/locales/{id}/productos?categoria_global_id=&subcategoria_local_id=` | público |
+| GET | `/productos/{id}` | público |
 | GET | `/carrito` | comprador con sesión |
+| POST | `/carrito/cotizar` | comprador con sesión |
 | DELETE | `/carrito` | comprador con sesión |
 | PUT | `/carrito/items/{variante_id}` | comprador con sesión |
 | DELETE | `/carrito/items/{variante_id}` | comprador con sesión |
+| GET / POST | `/direcciones` | comprador con sesión |
+| PATCH / DELETE | `/direcciones/{id}` | comprador dueño |
+| PATCH | `/direcciones/{id}/principal` | comprador dueño |
 | GET / POST | `/vendedor/locales` | vendedor |
 | PATCH | `/vendedor/locales/{id}` | vendedor dueño |
 | POST | `/vendedor/locales/{id}/subcategorias` | vendedor dueño |
@@ -322,6 +328,20 @@ El checkout sigue siendo `POST /pedidos`: agrupa los ítems por local, crea un
 `sub_pedido` por local y un solo pago por el total. El mínimo se valida contra
 el subtotal de productos de cada local, sin envío.
 
+La cotización `POST /carrito/cotizar` usa el carrito guardado y devuelve por
+local subtotal, envío, mínimo, faltante y total. Es solo lectura: no crea pedido
+ni toca stock. El detalle público `GET /productos/{id}` devuelve `disponible`
+(hay/no hay) en vez de la cantidad exacta de inventario.
+
+Las direcciones guardan `latitud` y `longitud` calculadas por el frontend. El
+backend no geocodifica: solo valida un rango aproximado de Colombia. Cualquier
+proveedor de geocodificación se decidirá en una etapa posterior. La primera
+dirección queda como principal; el índice único parcial impide dos principales.
+
+CORS usa `CORS_ORIGINS` (por defecto `http://localhost:5173`) y responde con
+`Access-Control-Allow-Credentials: true` solo a ese origen exacto. No se debe
+usar `*`: la cookie de sesión y el token CSRF viajan con credenciales.
+
 ---
 
 ## 6. Cómo está armado
@@ -337,7 +357,7 @@ backend/
 │   ├── config/                lectura y validación del .env
 │   ├── lib/                   prisma, logger, errores, cripto, transacción
 │   ├── mail/                  interfaz del correo + proveedor de prueba
-│   ├── middlewares/           sesión, CSRF, rate limit
+│   ├── middlewares/           sesión, CSRF, CORS, rate limit
 │   ├── routes/v1/             las rutas, bajo /api/v1
 │   ├── services/              la lógica de negocio
 │   └── jobs/                  registro de tareas programadas
@@ -373,7 +393,7 @@ Las decisiones que importan:
 La sección 10 de la especificación define doce invariantes. Cada uno tiene un
 archivo de prueba en `tests/invariantes/`.
 
-**Estado en la Etapa 3:**
+**Estado en la Etapa 3b:**
 
 | # | Invariante | Estado |
 |---|---|---|
@@ -405,11 +425,11 @@ alguno.
 Las pruebas corren contra la base real (`ccv_test`), no contra simulacros.
 
 `npm run verificar` (guardianes + cobertura de pruebas + tests) da así al
-terminar la Etapa 3:
+terminar la Etapa 3b:
 
 ```
 Invariantes estaticos: OK (1, 4 y 7 sin violaciones).
-tests 196 · pass 184 · fail 0 · skipped 12
+tests 214 · pass 202 · fail 0 · skipped 12
 ```
 
 Las 12 que se saltan son **todas invariantes que todavía no aplican**, y cada
@@ -432,11 +452,14 @@ explica cómo levantarlo (`npm run db:iniciar`). Solo se saltan si se define
 
 ## 9. Qué falta
 
-La Etapa 3 quedó implementada en el backend con el **proveedor Wompi falso**.
+La Etapa 3b quedó implementada en el backend con el **proveedor Wompi falso**.
 Todavía no está hecho, a propósito:
 
 - **Frontend de la Etapa 3:** va en otro repositorio. Este backend ya expone el
   contrato y las rutas que necesita.
+- **Geocodificación:** las coordenadas las calcula el frontend. No hay proveedor
+  de geocodificación en el backend; si se necesita, se decide y documenta antes
+  de implementarlo.
 - **Wompi real:** cargar `WOMPI_PUB_KEY`, `WOMPI_PRV_KEY`, `WOMPI_EVENTS_KEY` y
   `WOMPI_INTEGRITY_KEY`, poner `WOMPI_PROVEEDOR="real"` y probar el sandbox.
   La API de Reembolsos V2 (`POST /v1/refunds`) ya está identificada en la

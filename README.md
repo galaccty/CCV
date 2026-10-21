@@ -2,8 +2,10 @@
 
 Backend del marketplace multi-vendedor. Node.js + Express + PostgreSQL.
 
-**Estado: Etapa 1 terminada.** La Etapa 2 (corte vertical con pagos) **no** está
-implementada. Antes de avanzar, lee la sección [Qué falta](#qué-falta).
+**Estado: Etapa 2 (corte vertical) implementada y verificada en modo de pruebas.**
+El proveedor de Wompi es falso por defecto: no hace llamadas HTTP y permite
+probar checkout, pago, webhook, stock y ledger completos. La integración real
+espera las llaves de sandbox y la verificación del endpoint de reembolsos.
 
 La especificación completa vive en
 [`especificacion_centro_comercial_v4.md`](./especificacion_centro_comercial_v4.md).
@@ -324,29 +326,30 @@ Las decisiones que importan:
 La sección 10 de la especificación define doce invariantes. Cada uno tiene un
 archivo de prueba en `tests/invariantes/`.
 
-**Estado en la Etapa 1:**
+**Estado en la Etapa 2:**
 
 | # | Invariante | Estado |
 |---|---|---|
-| 1 | El ledger es la fuente de verdad | activo (guardián) |
-| 2 | `pago.referencia` es UNIQUE | pendiente, Etapa 2 |
-| 3 | El webhook responde 200 solo después | pendiente, Etapa 2 |
+| 1 | El ledger es la fuente de verdad | activo (solo `services/ledger.js` escribe saldos) |
+| 2 | `pago.referencia` es UNIQUE | activo (UNIQUE + alerta de referencia desconocida) |
+| 3 | El webhook responde 200 solo después | activo (200 después de procesar; 5xx si es transitorio) |
 | 4 | Wompi nunca dentro de una transacción | activo (3 capas) |
-| 5 | Los snapshots no se modifican | pendiente, Etapa 2 |
+| 5 | Los snapshots no se modifican | activo (triggers de la Etapa 2) |
 | 6 | Entregado ≠ dinero movido | pendiente, Etapa 4 |
-| 7 | Stock solo por el módulo de stock | activo (guardián) |
+| 7 | Stock solo por el módulo de stock | activo (módulo único + concurrencia) |
 | 8 | La deuda se compensa solo en liquidación | pendiente, Etapa 4 |
 | 9 | El estado del local solo lo cambia `recalcular_estado_local` | pendiente, Etapa 4 |
-| 10 | Idempotency-Key en los POST que crean | pendiente, Etapa 2 |
-| 11 | Nada financiero se borra | parcial (`auditoria_admin`) |
-| 12 | Los montos se calculan en el backend | pendiente, Etapa 3 |
+| 10 | Idempotency-Key en los POST que crean | activo (pedido y pago) |
+| 11 | Nada financiero se borra | parcial (cuenta_local incluida; faltan productos y retención) |
+| 12 | Los montos se calculan en el backend | activo (checkout) |
 
-"pendiente" no es "borrado": cada archivo tiene el motivo y la etapa written en
+"pendiente" no es "borrado": cada archivo tiene el motivo y la etapa escritos en
 el comentario, y `tests/invariantes/indice.test.js` falla si alguien borra
 alguno.
 
 `npm test` muestra el resumen completo. Las pruebas que necesitan base de datos
-se saltan solas si no hay conexión, y lo dicen.
+**fallan** con un mensaje claro si no hay conexión; solo se saltan si se define
+`PERMITIR_SALTAR_BD=1`, y esa variable se ignora en CI.
 
 ---
 
@@ -354,34 +357,46 @@ se saltan solas si no hay conexión, y lo dicen.
 
 Las pruebas corren contra la base real (`ccv_test`), no contra simulacros.
 
-`npm test` da así:
+`npm run verificar` (guardianes + cobertura de pruebas + tests) da así al
+terminar la Etapa 2:
 
 ```
-tests 94 · pass 63 · fail 0 · skipped 31
+Invariantes estaticos: OK (1, 4 y 7 sin violaciones).
+tests 169 · pass 155 · fail 0 · skipped 14
 ```
 
-Las 31 que se saltan son **todas invariantes que todavía no aplican**, y cada
-una dice en pantalla por qué y en qué etapa se activa. Cero se saltan por
-falta de base.
+Las 14 que se saltan son **todas invariantes que todavía no aplican**, y cada
+una dice en pantalla por qué y en qué etapa se activa:
 
-Si no tenés PostgreSQL corriendo, `npm test` sigue funcionando: corre lo que
-no necesita base y salta el resto diciendo a qué base apuntaba.
+- 4 del invariante 6 (el saldo se libera solo con el job de la Etapa 4).
+- 4 del invariante 8 (liquidaciones de la Etapa 4).
+- 4 del invariante 9 (máquina de estados del local, Etapa 4).
+- 2 del invariante 11 (desactivar productos y retención, Etapas 3 y 6).
 
-Detalle que costó encontrar: los archivos de prueba corren **en paralelo**, y
-cada cliente de Prisma abre su propio pool de conexiones. Si los 16 archivos
-crearan uno, se agotarían las del servidor y los que sí usan la base fallarían
-al conectarse. Por eso el cliente de Prisma vive únicamente en
-`tests/helpers/base.js`, que solo importan los dos archivos que lo necesitan.
+Cero se saltan por falta de base. `pretest` **recrea** `ccv_test` desde cero,
+aplica todas las migraciones y siembra la configuración base. No se usa
+`TRUNCATE` ni se desactivan triggers.
+
+Si PostgreSQL no está corriendo, las pruebas de base fallan con un mensaje que
+explica cómo levantarlo (`npm run db:iniciar`). Solo se saltan si se define
+`PERMITIR_SALTAR_BD=1` fuera de CI; en CI esa variable se ignora.
 
 ---
 
 ## 9. Qué falta
 
-Nada de esto está implementado, a propósito:
+La Etapa 2 quedó implementada con el **proveedor Wompi falso**. Todavía no está
+hecho, a propósito:
 
-- **Etapa 2:** pagos, webhook de Wompi, carrito, pedidos, sub-pedidos, ledger.
-- **Etapa 3:** locales, productos, variantes, categorías, búsqueda.
-- **Etapa 4:** efectivo, saldos, liquidaciones, disputas, reembolsos, paneles.
+- **Wompi real:** cargar `WOMPI_PUB_KEY`, `WOMPI_PRV_KEY`, `WOMPI_EVENTS_KEY` y
+  `WOMPI_INTEGRITY_KEY`, poner `WOMPI_PROVEEDOR="real"` y probar el sandbox.
+  Falta verificar en la documentación oficial el endpoint de reembolsos y la
+  consulta de transacciones por referencia; por eso el reembolso automático
+  real se detiene con un error y una alerta en vez de marcar un reembolso falso.
+- **Etapa 3:** locales, productos, variantes, categorías, búsqueda y checkout
+  multi-local.
+- **Etapa 4:** efectivo, saldos, liquidaciones, disputas, ejecución real de
+  reembolsos, paneles y liberación del saldo retenido.
 - **Etapas 5 a 7:** notificaciones, calificaciones, home dinámica, hosting.
 
 Y siguen abiertas las decisiones de la sección 2 de la especificación:

@@ -24,8 +24,8 @@ export function cliente() {
     },
 
     /** POST con el token anti-CSRF si hace falta. */
-    async post(ruta, cuerpo) {
-      return conCsrf(agente, 'post', ruta, cuerpo);
+    async post(ruta, cuerpo, cabeceras = {}) {
+      return conCsrf(agente, 'post', ruta, cuerpo, cabeceras);
     },
 
     async patch(ruta, cuerpo) {
@@ -60,9 +60,12 @@ export async function conCookieFabricada(ruta, valorCookie) {
   return request(app).get(ruta).set('Cookie', `ccv_sesion=${valorCookie}`);
 }
 
-async function conCsrf(agente, metodo, ruta, cuerpo) {
+async function conCsrf(agente, metodo, ruta, cuerpo, cabeceras = {}) {
   const token = await obtenerTokenCsrf(agente);
   let peticion = agente[metodo](ruta).set('X-CSRF-Token', token);
+  for (const [nombre, valor] of Object.entries(cabeceras)) {
+    peticion = peticion.set(nombre, valor);
+  }
   if (cuerpo !== undefined) peticion = peticion.send(cuerpo);
   return peticion;
 }
@@ -105,6 +108,53 @@ export async function crearUsuarioVerificado(opciones = {}) {
 
   await marcarEmailVerificado(email);
   return { ...registro.body.usuario, contrasena };
+}
+
+/**
+ * Registra un usuario con los roles indicados, verifica el correo e inicia
+ * sesion con el mismo agente. Devuelve el agente listo para hacer peticiones
+ * autenticadas (con su cookie de sesion y su token CSRF).
+ *
+ * Sirve para las pruebas de la Etapa 2, donde hacen falta comprador y vendedor.
+ */
+export async function crearUsuarioConSesion(opciones = {}) {
+  const {
+    contrasena = 'PruebaSegura123',
+    nombre = 'Usuario de prueba',
+    roles = ['comprador'],
+  } = opciones;
+
+  const email =
+    opciones.email ??
+    `usuario.${Date.now()}.${Math.random().toString(36).slice(2, 8)}@ejemplo.com`;
+
+  const agente = cliente();
+  const registro = await agente.post('/api/v1/auth/registro', {
+    nombre,
+    email,
+    contrasena,
+    roles,
+    acepto_terminos: true,
+  });
+
+  if (registro.status !== 201) {
+    throw new Error(
+      `No se pudo registrar el usuario: ${JSON.stringify(registro.body)}`,
+    );
+  }
+
+  await marcarEmailVerificado(email);
+
+  const login = await agente.post('/api/v1/auth/login', { email, contrasena });
+  if (login.status !== 200) {
+    throw new Error(`No se pudo iniciar sesion: ${JSON.stringify(login.body)}`);
+  }
+
+  return {
+    ...registro.body.usuario,
+    contrasena,
+    cliente: agente,
+  };
 }
 
 /**

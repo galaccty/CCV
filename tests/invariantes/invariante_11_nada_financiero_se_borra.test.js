@@ -32,7 +32,7 @@ export const ESTADO = estadoInvariante({
   aplica: 'parcial',
   etapa: 'Etapa 4',
   motivo:
-    'pedido, pago, reembolso, sub_pedido, detalle y ledger ya se protegen. Faltan cuenta_local, productos y la retencion.',
+    'pedido, pago, reembolso, sub_pedido, detalle, ledger y cuenta_local ya se protegen. Faltan productos y la retencion.',
 });
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -181,13 +181,20 @@ describe('invariante 11 - nada financiero se borra', () => {
     );
   });
 
-  test(
-    'borrar la cuenta de un local se protege en la Etapa 4',
-    pendiente('Etapa 4', 'la cuenta_local y el job de retencion llegan con los saldos'),
-    () => {
-      assert.ok(true);
-    },
-  );
+  test('borrar la cuenta de un local falla en la base', CON_BASE, async () => {
+    const { local } = await crearCatalogo();
+    await prisma.cuentaLocal.create({ data: { localId: local.id } });
+
+    await assert.rejects(
+      () => prisma.cuentaLocal.delete({ where: { localId: local.id } }),
+      /no se puede borrar|invariante 11|restrict/i,
+    );
+
+    const sigue = await prisma.cuentaLocal.findUnique({
+      where: { localId: local.id },
+    });
+    assert.ok(sigue, 'la cuenta debe seguir existiendo');
+  });
 
   test(
     'los productos se desactivan, no se borran',

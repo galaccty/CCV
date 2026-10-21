@@ -15,6 +15,7 @@
 import { prisma } from './base.js';
 import { crearVariante } from '../../src/services/stock.js';
 import { aBigInt, multiplicar, sumar } from '../../src/lib/dinero.js';
+import { limpiarCacheConfiguracion } from '../../src/services/configuracion.js';
 
 let contador = 0;
 
@@ -42,16 +43,40 @@ export async function crearUsuarioDirecto({ nombre = 'Usuario de prueba', roles 
  * Crea vendedor, rubro, local activo, categoria, producto y variante.
  * Devuelve todo para que cada prueba use lo que necesite.
  */
-export async function crearCatalogo({
+export async function crearCatalogo(opciones = {}) {
+  const vendedor = await crearUsuarioDirecto({
+    nombre: 'Vendedor',
+    roles: ['vendedor'],
+  });
+  const catalogo = await crearCatalogoParaVendedor({
+    vendedorId: vendedor.id,
+    ...opciones,
+  });
+  return { vendedor, ...catalogo };
+}
+
+/**
+ * Crea el catalogo (rubro, local, categoria, producto y variante) para un
+ * vendedor que ya existe. Se usa cuando el vendedor se registro por HTTP y
+ * necesitamos su mismo id para probar las rutas autenticadas.
+ */
+export async function crearCatalogoParaVendedor({
+  vendedorId,
   precio = 10000n,
   stockInicial = 10,
   estadoLocal = 'activo',
+  activoVariante = true,
 } = {}) {
-  const vendedor = await crearUsuarioDirecto({ nombre: 'Vendedor', roles: ['vendedor'] });
-  const rubro = await prisma.rubro.create({ data: { nombre: `rubro-${sufijo()}` } });
+  if (!Number.isInteger(vendedorId) || vendedorId <= 0) {
+    throw new Error(`Vendedor invalido: ${vendedorId}`);
+  }
+
+  const rubro = await prisma.rubro.create({
+    data: { nombre: `rubro-${sufijo()}` },
+  });
   const local = await prisma.local.create({
     data: {
-      usuarioId: vendedor.id,
+      usuarioId: vendedorId,
       rubroId: rubro.id,
       nombre: `Local ${sufijo()}`,
       latitud: 4.65,
@@ -75,9 +100,40 @@ export async function crearCatalogo({
     atributos: { talla: 'M' },
     precio,
     stock: stockInicial,
+    activo: activoVariante,
   });
 
-  return { vendedor, rubro, local, categoria, producto, variante };
+  return { rubro, local, categoria, producto, variante };
+}
+
+/**
+ * Configuracion base de las pruebas. Los valores son los del ejemplo de la
+ * especificacion; cada prueba puede sobrescribir los que necesite.
+ */
+const CONFIGURACION_BASE = [
+  ['porcentaje_comision', '5', 'numero'],
+  ['comision_minima', '2000', 'entero'],
+  ['pedido_minimo', '30000', 'entero'],
+  ['tarifa_base_envio', '2000', 'entero'],
+  ['tarifa_por_km', '800', 'entero'],
+  ['dias_retencion', '5', 'entero'],
+  ['limite_deuda', '50000', 'entero'],
+  ['plazo_dias', '15', 'entero'],
+  ['dias_auto_entrega', '7', 'entero'],
+  ['minutos_expiracion_pago', '30', 'entero'],
+  ['horas_aceptacion', '48', 'entero'],
+];
+
+export async function sembrarConfiguracion(sobrescrituras = {}) {
+  for (const [clave, valor, tipo] of CONFIGURACION_BASE) {
+    const efectivo = sobrescrituras[clave] ?? valor;
+    await prisma.configuracion.upsert({
+      where: { clave },
+      create: { clave, valor: String(efectivo), tipo },
+      update: { valor: String(efectivo), tipo },
+    });
+  }
+  limpiarCacheConfiguracion();
 }
 
 /**

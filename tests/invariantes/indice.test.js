@@ -19,18 +19,18 @@ import { fileURLToPath } from 'node:url';
 const CARPETA = path.dirname(fileURLToPath(import.meta.url));
 
 const ESPERADOS = [
-  [1, 'activo', 'guardian estatico: nada escribe saldos fuera del ledger'],
-  [2, 'pendiente', 'Etapa 2 - tabla pago y webhook'],
-  [3, 'pendiente', 'Etapa 2 - ruta del webhook'],
+  [1, 'activo', 'guardian estatico: solo el servicio del ledger escribe saldos'],
+  [2, 'activo', 'referencia UNIQUE y referencias desconocidas registradas y alertadas'],
+  [3, 'activo', 'el webhook responde 200 solo despues de procesar; 5xx si es transitorio'],
   [4, 'activo', 'guardian en ejecucion con AsyncLocalStorage'],
   [5, 'activo', 'triggers: los snapshots de sub_pedido y detalle_producto no se modifican'],
   [6, 'pendiente', 'Etapa 4 - job de liberacion de saldo'],
-  [7, 'activo', 'guardian estatico: nada escribe stock fuera del modulo'],
+  [7, 'activo', 'modulo unico de stock y descuento atomico probado en concurrencia'],
   [8, 'pendiente', 'Etapa 4 - liquidaciones'],
   [9, 'pendiente', 'Etapa 4 - maquina de estados del local'],
-  [10, 'pendiente', 'Etapa 2 - POST de pedido y pago'],
-  [11, 'parcial', 'pedidos, pagos, reembolsos, sub_pedidos, detalles y ledger protegidos; faltan cuenta_local y retencion'],
-  [12, 'pendiente', 'Etapa 3 - primeras tablas con montos'],
+  [10, 'activo', 'Idempotency-Key obligatoria en los POST de pedido y pago'],
+  [11, 'parcial', 'pedidos, pagos, reembolsos, sub_pedidos, detalles, ledger y cuenta_local protegidos; faltan productos y retencion'],
+  [12, 'activo', 'el checkout calcula precios, comision, envio y total en el backend'],
 ];
 
 describe('indice de invariantes', () => {
@@ -64,7 +64,7 @@ describe('indice de invariantes', () => {
 
   test('resumen de estado', () => {
     const resumen = ESPERADOS.map(([n, estado, nota]) => `  ${n}: ${estado.padEnd(10)} ${nota}`).join('\n');
-    console.log(`\nEstado de los invariantes en la Etapa 1:\n${resumen}\n`);
+    console.log(`\nEstado de los invariantes en la Etapa 2:\n${resumen}\n`);
     assert.equal(ESPERADOS.length, 12);
   });
 });

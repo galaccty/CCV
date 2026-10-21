@@ -5,6 +5,8 @@ import { withTransaccion } from '../lib/transaccion.js';
 import { centavosDePesos } from '../lib/dinero.js';
 import { descontarStock, ErrorStockInsuficiente } from './stock.js';
 import { registrarMovimiento } from './ledger.js';
+import { descontarItemsDePedido } from './carrito.js';
+import { puedeVenderLocal } from '../domain/estados.js';
 import * as pagos from './pagos.js';
 
 /**
@@ -244,7 +246,7 @@ export async function procesarEvento({ cuerpo, checksum }) {
       // Primero se valida todo y se descuenta stock. Si una sola linea falla,
       // el UPDATE atomico devuelve 0 y toda la transaccion A se revierte.
       for (const sub of subPedidos) {
-        if (sub.local.estado !== 'activo') {
+        if (!puedeVenderLocal(sub.local.estado)) {
           throw new ErrorConfirmacionNoPosible('local_inactivo');
         }
         for (const detalle of sub.detalles) {
@@ -276,6 +278,14 @@ export async function procesarEvento({ cuerpo, checksum }) {
         monto: pagoActual.monto,
         pagoId: pago.id,
       });
+
+      // El carrito se vacia solo de las unidades compradas y solo cuando el
+      // pago se aprueba. Un pago fallido o expirado conserva el carrito.
+      await descontarItemsDePedido(
+        tx,
+        pedidoActual.usuarioId,
+        subPedidos.flatMap((sub) => sub.detalles),
+      );
 
       if (pedidoActual.estado === 'pendiente_pago') {
         await tx.pedido.update({

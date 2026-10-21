@@ -11,6 +11,7 @@ import {
   sumar,
 } from '../lib/dinero.js';
 import { ErrorApi, errorNoEncontrado } from '../lib/errores.js';
+import { puedeVenderLocal } from '../domain/estados.js';
 import {
   CLAVES_CONGELADAS,
   cargarConfiguracion,
@@ -28,8 +29,8 @@ import { completarEnTx } from './idempotencia.js';
  * El stock SOLO se verifica, no se descuenta. El descuento atomico ocurre
  * cuando el pago se confirma (webhook).
  *
- * En la Etapa 2 todos los items tienen que ser del mismo local. El checkout
- * multi-local llega en la Etapa 3.
+ * Los items se agrupan por local. Cada sub_pedido calcula su propio envio,
+ * comision y pedido minimo; el pedido tiene un solo pago por el total.
  */
 
 const RADIO_TIERRA_KM = 6371;
@@ -153,7 +154,7 @@ async function prepararPedido({ datos }) {
     if (
       !variante.activo ||
       !variante.producto.activo ||
-      variante.producto.local.estado !== 'activo'
+      !puedeVenderLocal(variante.producto.local.estado)
     ) {
       throw new ErrorApi(
         'variante_no_disponible',
@@ -161,15 +162,6 @@ async function prepararPedido({ datos }) {
         422,
       );
     }
-  }
-
-  const localId = variantes[0].producto.localId;
-  if (variantes.some((variante) => variante.producto.localId !== localId)) {
-    throw new ErrorApi(
-      'varios_locales_no_soportado',
-      'En esta etapa todos los productos del pedido deben ser del mismo local.',
-      422,
-    );
   }
 
   const faltantes = agrupados
@@ -199,47 +191,83 @@ async function prepararPedido({ datos }) {
     };
   });
 
-  const subtotal = lineas.reduce((total, linea) => total + linea.subtotal, 0n);
-  const pedidoMinimo = aBigInt(snapshot.pedido_minimo, 'pedido_minimo');
+  // Se agrupa por local conservando el orden en que el comprador mando los
+  // items. Cada local tiene su propio subtotal, envio, comision y minimo.
+  const porLocal = new Map();
+  for (const linea of lineas) {
+    const local = linea.variante.producto.local;
+    let grupo = porLocal.get(local.id);
 
-  if (subtotal < pedidoMinimo) {
+    if (!grupo) {
+      grupo = {
+        local,
+        lineas: [],
+        subtotal: 0n,
+      };
+      porLocal.set(local.id, grupo);
+    }
+
+    grupo.lineas.push(linea);
+    grupo.subtotal += linea.subtotal;
+  }
+
+  const pedidoMinimo = aBigInt(snapshot.pedido_minimo, 'pedido_minimo');
+  const grupos = [];
+
+  for (const grupo of porLocal.values()) {
+    if (grupo.subtotal < pedidoMinimo) {
+      throw new ErrorApi(
+        'pedido_minimo_no_alcanzado',
+        `El pedido minimo por local es de ${aNumeroSeguro(pedidoMinimo)} pesos.`,
+        422,
+        {
+          local_id: grupo.local.id,
+          nombre_local: grupo.local.nombre,
+          minimo: aNumeroSeguro(pedidoMinimo),
+          subtotal: aNumeroSeguro(grupo.subtotal),
+        },
+      );
+    }
+
+    const envio = calcularCostoEnvio({
+      latitudLocal: grupo.local.latitud,
+      longitudLocal: grupo.local.longitud,
+      latitudEntrega: datos.direccion.latitud,
+      longitudEntrega: datos.direccion.longitud,
+      tarifaBase: snapshot.tarifa_base_envio,
+      tarifaPorKm: snapshot.tarifa_por_km,
+    });
+
+    const comision = calcularComision({
+      subtotal: grupo.subtotal,
+      porcentaje: snapshot.porcentaje_comision,
+      comisionMinima: snapshot.comision_minima,
+    });
+
+    grupos.push({
+      local: grupo.local,
+      lineas: grupo.lineas,
+      subtotal: grupo.subtotal,
+      comision,
+      costoEnvio: envio.costo,
+      distanciaMetros: envio.distanciaMetros,
+      total: sumar(grupo.subtotal, envio.costo),
+    });
+  }
+
+  if (datos.metodo_pago === 'efectivo' && grupos.length > 1) {
     throw new ErrorApi(
-      'pedido_minimo_no_alcanzado',
-      `El pedido minimo es de ${aNumeroSeguro(pedidoMinimo)} pesos.`,
+      'efectivo_un_solo_local',
+      'Los pedidos en efectivo solo pueden incluir productos de un local.',
       422,
-      {
-        minimo: aNumeroSeguro(pedidoMinimo),
-        subtotal: aNumeroSeguro(subtotal),
-      },
     );
   }
 
-  const local = variantes[0].producto.local;
-  const envio = calcularCostoEnvio({
-    latitudLocal: local.latitud,
-    longitudLocal: local.longitud,
-    latitudEntrega: datos.direccion.latitud,
-    longitudEntrega: datos.direccion.longitud,
-    tarifaBase: snapshot.tarifa_base_envio,
-    tarifaPorKm: snapshot.tarifa_por_km,
-  });
-
-  const comision = calcularComision({
-    subtotal,
-    porcentaje: snapshot.porcentaje_comision,
-    comisionMinima: snapshot.comision_minima,
-  });
-
-  const total = sumar(subtotal, envio.costo);
+  const total = grupos.reduce((suma, grupo) => suma + grupo.total, 0n);
 
   return {
     snapshot,
-    lineas,
-    local,
-    subtotal,
-    comision,
-    costoEnvio: envio.costo,
-    distanciaMetros: envio.distanciaMetros,
+    grupos,
     total,
   };
 }
@@ -313,43 +341,45 @@ export async function crearPedido({ usuario, datos, idempotenciaId }) {
       },
     });
 
-    const subPedido = await tx.subPedido.create({
-      data: {
-        pedidoId: pedido.id,
-        localId: preparado.local.id,
-        nombreLocal: preparado.local.nombre,
-        subtotalProductos: preparado.subtotal,
-        costoEnvio: preparado.costoEnvio,
-        comision: preparado.comision,
-        total: preparado.total,
-        estado: 'por_aceptar',
-      },
-    });
+    for (const grupo of preparado.grupos) {
+      const subPedido = await tx.subPedido.create({
+        data: {
+          pedidoId: pedido.id,
+          localId: grupo.local.id,
+          nombreLocal: grupo.local.nombre,
+          subtotalProductos: grupo.subtotal,
+          costoEnvio: grupo.costoEnvio,
+          comision: grupo.comision,
+          total: grupo.total,
+          estado: 'por_aceptar',
+        },
+      });
 
-    for (const linea of preparado.lineas) {
-      await tx.detalleProducto.create({
+      for (const linea of grupo.lineas) {
+        await tx.detalleProducto.create({
+          data: {
+            subPedidoId: subPedido.id,
+            varianteId: linea.variante.id,
+            nombreProducto: linea.variante.producto.nombre,
+            atributosElegidos:
+              linea.variante.atributos === null
+                ? undefined
+                : linea.variante.atributos,
+            cantidad: linea.cantidad,
+            precioUnitario: linea.precioUnitario,
+          },
+        });
+      }
+
+      await tx.historialEstadoSubPedido.create({
         data: {
           subPedidoId: subPedido.id,
-          varianteId: linea.variante.id,
-          nombreProducto: linea.variante.producto.nombre,
-          atributosElegidos:
-            linea.variante.atributos === null
-              ? undefined
-              : linea.variante.atributos,
-          cantidad: linea.cantidad,
-          precioUnitario: linea.precioUnitario,
+          estadoAnterior: null,
+          estadoNuevo: 'por_aceptar',
+          cambiadoPor: usuario.id,
         },
       });
     }
-
-    await tx.historialEstadoSubPedido.create({
-      data: {
-        subPedidoId: subPedido.id,
-        estadoAnterior: null,
-        estadoNuevo: 'por_aceptar',
-        cambiadoPor: usuario.id,
-      },
-    });
 
     const completo = await tx.pedido.findUnique({
       where: { id: pedido.id },

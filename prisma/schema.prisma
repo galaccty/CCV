@@ -257,7 +257,7 @@ model ProductoVariante {
   id            Int      @id @default(autoincrement())
   productoId    Int      @map("producto_id")
   atributos     Json?
-  precio        Int
+  precio        BigInt
   stock         Int      @default(0)
   activo        Boolean  @default(true)
   creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
@@ -280,7 +280,7 @@ model Pedido {
   direccionTexto    String       @map("direccion_texto") @db.Text
   direccionLatitud  Float        @map("direccion_latitud")
   direccionLongitud Float        @map("direccion_longitud")
-  total             Int
+  total             BigInt
   metodoPago        MetodoPago   @map("metodo_pago")
   estado            EstadoPedido @default(pendiente_pago)
   configSnapshot    Json         @map("config_snapshot")
@@ -301,10 +301,10 @@ model SubPedido {
   pedidoId             Int                   @map("pedido_id")
   localId              Int                   @map("local_id")
   nombreLocal          String                @map("nombre_local") @db.VarChar(160)
-  subtotalProductos    Int                   @map("subtotal_productos")
-  costoEnvio           Int                   @map("costo_envio")
-  comision             Int
-  total                Int
+  subtotalProductos    BigInt                @map("subtotal_productos")
+  costoEnvio           BigInt                @map("costo_envio")
+  comision             BigInt
+  total                BigInt
   estado               EstadoSubPedido       @default(pendiente)
   evidenciaEnvio       String?               @map("evidencia_envio") @db.Text
   entregaConfirmadaPor EntregaConfirmadaPor? @map("entrega_confirmada_por")
@@ -333,7 +333,7 @@ model DetalleProducto {
   nombreProducto    String @map("nombre_producto") @db.VarChar(200)
   atributosElegidos Json?  @map("atributos_elegidos")
   cantidad          Int
-  precioUnitario    Int    @map("precio_unitario")
+  precioUnitario    BigInt @map("precio_unitario")
 
   subPedido SubPedido        @relation(fields: [subPedidoId], references: [id])
   variante  ProductoVariante @relation(fields: [varianteId], references: [id])
@@ -369,8 +369,8 @@ model Pago {
   referencia         String     @unique @db.VarChar(255)
   idTransaccionWompi String?    @unique @map("id_transaccion_wompi") @db.VarChar(120)
   metodoPago         MetodoPago @map("metodo_pago")
-  monto              Int
-  montoReembolsado   Int        @default(0) @map("monto_reembolsado")
+  monto              BigInt
+  montoReembolsado   BigInt     @default(0) @map("monto_reembolsado")
   estado             EstadoPago @default(pendiente)
   fechaCreacion      DateTime   @default(now()) @map("fecha_creacion") @db.Timestamptz(3)
   fechaActualizacion DateTime   @updatedAt @map("fecha_actualizacion") @db.Timestamptz(3)
@@ -429,7 +429,7 @@ model Reembolso {
   pagoId        Int             @map("pago_id")
   subPedidoId   Int             @map("sub_pedido_id")
   tipo          TipoReembolso   @default(digital)
-  monto         Int
+  monto         BigInt
   estado        EstadoReembolso @default(pendiente)
   motivo        String          @db.VarChar(200)
   fecha         DateTime        @default(now()) @db.Timestamptz(3)
@@ -456,7 +456,7 @@ model Ledger {
   pagoId      Int?           @map("pago_id")
   reembolsoId Int?           @map("reembolso_id")
   tipo        TipoMovimiento @map("tipo")
-  monto       Int
+  monto       BigInt
   fecha       DateTime       @default(now()) @db.Timestamptz(3)
 
   local     Local?     @relation(fields: [localId], references: [id], onDelete: Restrict)
@@ -474,9 +474,9 @@ model Ledger {
 
 model CuentaLocal {
   localId         Int       @id @map("local_id")
-  saldoDeuda      Int       @default(0) @map("saldo_deuda")
-  saldoPorPagar   Int       @default(0) @map("saldo_por_pagar")
-  saldoCongelado  Int       @default(0) @map("saldo_congelado")
+  saldoDeuda      BigInt    @default(0) @map("saldo_deuda")
+  saldoPorPagar   BigInt    @default(0) @map("saldo_por_pagar")
+  saldoCongelado  BigInt    @default(0) @map("saldo_congelado")
   fechaLimitePago DateTime? @map("fecha_limite_pago") @db.Date
   actualizadoEn   DateTime  @updatedAt @map("actualizado_en") @db.Timestamptz(3)
 

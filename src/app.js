@@ -6,6 +6,7 @@ import { manejadorErrores, manejadorNoEncontrado } from './lib/errores.js';
 import { cargarSesion } from './middlewares/sesion.js';
 import { proteccionCsrf } from './middlewares/csrf.js';
 import { limiteGeneral } from './middlewares/rateLimit.js';
+import { jsonBigInt } from './middlewares/jsonBigInt.js';
 import rutas from './routes/index.js';
 
 /**
@@ -32,6 +33,10 @@ export function crearApp() {
   app.use(express.json({ limit: '100kb' }));
   app.use(express.urlencoded({ extended: false }));
   app.use(cookieParser());
+
+  // Todo monto sale como numero JSON desde un solo lugar. Si un bigint no
+  // cabe en Number.MAX_SAFE_INTEGER, el middleware responde 500.
+  app.use(jsonBigInt);
 
   // Registro de peticiones. Se registra al terminar, cuando ya se sabe el codigo.
   app.use((req, res, next) => {

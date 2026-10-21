@@ -14,6 +14,7 @@
 
 import { prisma } from './base.js';
 import { crearVariante } from '../../src/services/stock.js';
+import { aBigInt, multiplicar, sumar } from '../../src/lib/dinero.js';
 
 let contador = 0;
 
@@ -42,7 +43,7 @@ export async function crearUsuarioDirecto({ nombre = 'Usuario de prueba', roles 
  * Devuelve todo para que cada prueba use lo que necesite.
  */
 export async function crearCatalogo({
-  precio = 10000,
+  precio = 10000n,
   stockInicial = 10,
   estadoLocal = 'activo',
 } = {}) {
@@ -90,8 +91,8 @@ export async function crearPedidoDePrueba({
   compradorId,
   cantidad = 1,
   precioUnitario,
-  comision = 0,
-  costoEnvio = 0,
+  comision = 0n,
+  costoEnvio = 0n,
   estadoPedido = 'pendiente_pago',
   estadoSubPedido = 'pendiente',
 } = {}) {
@@ -99,9 +100,15 @@ export async function crearPedidoDePrueba({
     ? { id: compradorId }
     : await crearUsuarioDirecto({ nombre: 'Comprador', roles: ['comprador'] });
 
-  const precio = precioUnitario ?? variante.precio;
-  const subtotal = precio * cantidad;
-  const total = subtotal + costoEnvio;
+  if (!Number.isInteger(cantidad) || cantidad <= 0) {
+    throw new Error(`Cantidad invalida: ${cantidad}`);
+  }
+
+  const precio = aBigInt(precioUnitario ?? variante.precio, 'precioUnitario');
+  const subtotal = multiplicar(precio, BigInt(cantidad));
+  const envio = aBigInt(costoEnvio, 'costoEnvio');
+  const comisionBig = aBigInt(comision, 'comision');
+  const total = sumar(subtotal, envio);
 
   return prisma.$transaction(async (tx) => {
     const pedido = await tx.pedido.create({
@@ -131,8 +138,8 @@ export async function crearPedidoDePrueba({
         localId: local.id,
         nombreLocal: local.nombre,
         subtotalProductos: subtotal,
-        costoEnvio,
-        comision,
+        costoEnvio: envio,
+        comision: comisionBig,
         total,
         estado: estadoSubPedido,
       },
@@ -165,7 +172,7 @@ export async function crearPagoDePrueba({
       pedidoId: pedido.id,
       referencia: `PRUEBA-${sufijo()}`,
       metodoPago,
-      monto,
+      monto: aBigInt(monto, 'monto'),
       estado,
     },
   });
@@ -182,7 +189,7 @@ export async function crearReembolsoDePrueba({
       pagoId: pago.id,
       subPedidoId: subPedido.id,
       tipo: 'digital',
-      monto,
+      monto: aBigInt(monto, 'monto'),
       estado,
       motivo: 'prueba',
     },
@@ -190,8 +197,8 @@ export async function crearReembolsoDePrueba({
 }
 
 /** Movimiento de ledger crudo, solo para probar su inmutabilidad. */
-export async function crearMovimientoDePrueba({ localId = null, monto = 1000 } = {}) {
+export async function crearMovimientoDePrueba({ localId = null, monto = 1000n } = {}) {
   return prisma.ledger.create({
-    data: { localId, tipo: 'ajuste', monto },
+    data: { localId, tipo: 'ajuste', monto: aBigInt(monto, 'monto') },
   });
 }

@@ -18,6 +18,8 @@
  * habia descontado stock. No se usa para "arreglar" inventarios a mano.
  */
 
+import { aBigInt } from '../lib/dinero.js';
+
 export class ErrorStockInsuficiente extends Error {
   constructor(varianteId, cantidad) {
     super(
@@ -55,7 +57,8 @@ export async function crearVariante(
   if (!Number.isInteger(productoId) || productoId <= 0) {
     throw new Error(`Producto invalido: ${productoId}`);
   }
-  if (!Number.isInteger(precio) || precio < 0) {
+  const precioBig = aBigInt(precio, 'precio');
+  if (precioBig < 0n) {
     throw new Error(`Precio invalido: ${precio}`);
   }
   if (!Number.isInteger(stock) || stock < 0) {
@@ -63,7 +66,7 @@ export async function crearVariante(
   }
 
   return cliente.productoVariante.create({
-    data: { productoId, atributos, precio, stock, activo },
+    data: { productoId, atributos, precio: precioBig, stock, activo },
   });
 }
 

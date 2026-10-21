@@ -36,21 +36,21 @@ after(async () => {
 
 describe('invariante 5 - los snapshots de sub_pedido nunca se modifican', () => {
   test('cambiar el precio del producto no altera el pedido', CON_BASE, async () => {
-    const { local, variante } = await crearCatalogo({ precio: 10000 });
+    const { local, variante } = await crearCatalogo({ precio: 10000n });
     const { pedido, subPedido, detalle } = await crearPedidoDePrueba({
       local,
       variante,
       cantidad: 2,
-      precioUnitario: 10000,
-      comision: 1000,
+      precioUnitario: 10000n,
+      comision: 1000n,
     });
 
-    assert.equal(detalle.precioUnitario, 10000);
-    assert.equal(subPedido.total, 20000);
+    assert.equal(detalle.precioUnitario, 10000n);
+    assert.equal(subPedido.total, 20000n);
 
     // El catalogo cambia de precio. El pedido ya creado no se entera.
     await prisma.$executeRaw`
-      UPDATE "producto_variante" SET "precio" = ${99999} WHERE "id" = ${variante.id}
+      UPDATE "producto_variante" SET "precio" = ${99999n} WHERE "id" = ${variante.id}
     `;
 
     const detalleGuardado = await prisma.detalleProducto.findUnique({
@@ -61,9 +61,9 @@ describe('invariante 5 - los snapshots de sub_pedido nunca se modifican', () => 
       where: { id: variante.id },
     });
 
-    assert.equal(detalleGuardado.precioUnitario, 10000);
-    assert.equal(pedidoGuardado.total, 20000);
-    assert.equal(varianteActualizada.precio, 99999);
+    assert.equal(detalleGuardado.precioUnitario, 10000n);
+    assert.equal(pedidoGuardado.total, 20000n);
+    assert.equal(varianteActualizada.precio, 99999n);
 
     // Y el snapshot tampoco se puede reescribir a mano.
     await assert.rejects(
@@ -86,19 +86,19 @@ describe('invariante 5 - los snapshots de sub_pedido nunca se modifican', () => 
   });
 
   test('un reembolso no altera subtotal_productos, comision ni total', CON_BASE, async () => {
-    const { local, variante } = await crearCatalogo({ precio: 15000 });
+    const { local, variante } = await crearCatalogo({ precio: 15000n });
     const { pedido, subPedido } = await crearPedidoDePrueba({
       local,
       variante,
       cantidad: 1,
-      precioUnitario: 15000,
-      comision: 2000,
+      precioUnitario: 15000n,
+      comision: 2000n,
     });
-    const pago = await crearPagoDePrueba({ pedido, monto: 15000 });
+    const pago = await crearPagoDePrueba({ pedido, monto: 15000n });
     const reembolso = await crearReembolsoDePrueba({
       pago,
       subPedido,
-      monto: 15000,
+      monto: 15000n,
     });
 
     // El proceso real completa el reembolso y actualiza el pago en la misma
@@ -110,7 +110,7 @@ describe('invariante 5 - los snapshots de sub_pedido nunca se modifican', () => 
       });
       await tx.pago.update({
         where: { id: pago.id },
-        data: { montoReembolsado: 15000, estado: 'reembolsado' },
+        data: { montoReembolsado: 15000n, estado: 'reembolsado' },
       });
       await tx.subPedido.update({
         where: { id: subPedido.id },
@@ -124,18 +124,18 @@ describe('invariante 5 - los snapshots de sub_pedido nunca se modifican', () => 
     const pedidoDespues = await prisma.pedido.findUnique({ where: { id: pedido.id } });
 
     assert.equal(subDespues.estado, 'reembolsado');
-    assert.equal(subDespues.subtotalProductos, 15000);
-    assert.equal(subDespues.comision, 2000);
-    assert.equal(subDespues.total, 15000);
+    assert.equal(subDespues.subtotalProductos, 15000n);
+    assert.equal(subDespues.comision, 2000n);
+    assert.equal(subDespues.total, 15000n);
     assert.equal(subDespues.nombreLocal, subPedido.nombreLocal);
-    assert.equal(pedidoDespues.total, 15000);
+    assert.equal(pedidoDespues.total, 15000n);
 
     // Un reembolso no es una excusa para tocar los snapshots.
     await assert.rejects(
       () =>
         prisma.subPedido.update({
           where: { id: subPedido.id },
-          data: { comision: 0 },
+          data: { comision: 0n },
         }),
       /snapshots|no se modifican|restrict/i,
     );
@@ -154,14 +154,14 @@ describe('invariante 5 - los snapshots de sub_pedido nunca se modifican', () => 
       'sub_pedido no debe tener una columna neto: se calcula como subtotal_productos - comision',
     );
 
-    const { local, variante } = await crearCatalogo({ precio: 10000 });
+    const { local, variante } = await crearCatalogo({ precio: 10000n });
     const { subPedido } = await crearPedidoDePrueba({
       local,
       variante,
-      precioUnitario: 10000,
-      comision: 500,
+      precioUnitario: 10000n,
+      comision: 500n,
     });
 
-    assert.equal(subPedido.subtotalProductos - subPedido.comision, 9500);
+    assert.equal(subPedido.subtotalProductos - subPedido.comision, 9500n);
   });
 });

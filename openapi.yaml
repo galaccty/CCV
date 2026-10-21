@@ -1,0 +1,714 @@
+openapi: 3.0.3
+info:
+  title: Centro Comercial Virtual - API
+  version: 0.2.0
+  description: |
+    Contrato de la API del backend. Es la fuente de verdad: las rutas se
+    implementan después de quedar documentadas aquí.
+
+    Reglas generales:
+    - Prefijo `/api/v1`.
+    - Error único: `{ "error": { "codigo", "mensaje" } }`.
+    - JSON en snake_case, fechas ISO 8601 UTC, dinero como entero en pesos.
+    - Los POST que crean pedido o pago exigen `Idempotency-Key`.
+    - Los POST con sesión exigen `X-CSRF-Token` (cookie doble).
+
+    Etapa 2: corte vertical con un local, un producto, un pedido, un pago y
+    un cambio de estado. El proveedor de pagos corre en modo `fake` hasta que
+    existan las llaves de sandbox.
+
+servers:
+  - url: http://localhost:3000
+    description: Desarrollo local
+
+tags:
+  - name: Pedidos
+  - name: Pagos
+  - name: Sub-pedidos
+  - name: Vendedor
+
+security:
+  - cookieSesion: []
+
+paths:
+  /api/v1/pedidos:
+    post:
+      tags: [Pedidos]
+      summary: Crear un pedido (checkout)
+      description: |
+        Valida stock (solo lo verifica, no lo descuenta), calcula todos los
+        montos en el backend y congela la configuración en `config_snapshot`.
+        El pedido nace en `pendiente_pago`; no se descuenta stock hasta que el
+        pago se confirme.
+      operationId: crearPedido
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutRequest'
+      responses:
+        '201':
+          description: Pedido creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: La misma Idempotency-Key está en proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  codigo: solicitud_en_proceso
+                  mensaje: Ya hay una solicitud con esa clave en proceso.
+        '422':
+          description: >
+            Regla de negocio: stock insuficiente, pedido mínimo no alcanzado,
+            local no activo o pedido con varios locales (Etapa 3).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      tags: [Pedidos]
+      summary: Listar los pedidos del comprador
+      operationId: listarPedidos
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Lista paginada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaPedidos'
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/pedidos/{id}:
+    get:
+      tags: [Pedidos]
+      summary: Ver un pedido del comprador
+      operationId: verPedido
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdPedido'
+      responses:
+        '200':
+          description: Pedido con sus sub-pedidos y detalles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/pedidos/{id}/pagos:
+    post:
+      tags: [Pagos]
+      summary: Crear el pago de un pedido
+      description: |
+        Genera una referencia aleatoria (nunca derivada del local ni de la
+        hora), crea la fila en `pago` en estado `pendiente` y devuelve los
+        datos firmados para abrir el checkout de Wompi. No se llama a la API
+        de Wompi desde una transacción de base de datos.
+      operationId: crearPago
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdPedido'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '201':
+          description: Pago creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagoCreado'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: El pedido ya tiene pago o la clave está en proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Pedido expirado o pago no disponible (p. ej. efectivo)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/pagos/webhook:
+    post:
+      tags: [Pagos]
+      summary: Evento de Wompi
+      description: |
+        Verifica la firma del evento, guarda el evento en `evento_webhook`,
+        confirma el estado de la transacción contra la API de Wompi y recién
+        entonces responde.
+
+        - 200: procesado, ignorado o referencia desconocida (esta última alerta).
+        - 401: firma inválida (el evento queda registrado).
+        - 5xx: fallo transitorio; Wompi reintenta.
+      operationId: webhookWompi
+      security: []
+      parameters:
+        - name: X-Event-Checksum
+          in: header
+          required: false
+          description: Checksum del evento. También se acepta `signature.checksum` en el cuerpo.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventoWompi'
+      responses:
+        '200':
+          description: Evento procesado o registrado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recibido:
+                    type: boolean
+                  resultado:
+                    type: string
+                    enum: [ok, ignorado, referencia_desconocida]
+        '401':
+          description: Firma inválida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Fallo transitorio; Wompi debe reintentar
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/vendedor/sub-pedidos:
+    get:
+      tags: [Vendedor]
+      summary: Listar los sub-pedidos de los locales del vendedor
+      operationId: listarSubPedidosVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoSubPedido'
+      responses:
+        '200':
+          description: Lista paginada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaSubPedidos'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/sub-pedidos/{id}/aceptar:
+    post:
+      tags: [Sub-pedidos]
+      summary: Aceptar un sub-pedido (vendedor)
+      description: Transición `pendiente` -> `preparando`.
+      operationId: aceptarSubPedido
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdSubPedido'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Sub-pedido actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubPedido'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/sub-pedidos/{id}/enviar:
+    post:
+      tags: [Sub-pedidos]
+      summary: Marcar un sub-pedido como enviado (vendedor)
+      description: Transición `preparando` -> `enviado`. Exige evidencia de envío.
+      operationId: enviarSubPedido
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdSubPedido'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [evidencia_envio]
+              properties:
+                evidencia_envio:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                  description: >
+                    Código de seguimiento, URL firmada o referencia del
+                    domiciliario. El almacenamiento de archivos sigue pendiente
+                    (sección 2 de la especificación).
+      responses:
+        '200':
+          description: Sub-pedido actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubPedido'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/sub-pedidos/{id}/entregar:
+    post:
+      tags: [Sub-pedidos]
+      summary: Confirmar la entrega
+      description: |
+        Transición `enviado` -> `entregado`. La puede confirmar el comprador o
+        el vendedor. Marcar entregado NO libera dinero: `saldo_liberado_en`
+        sigue nulo hasta el job de retención (Etapa 4).
+      operationId: entregarSubPedido
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdSubPedido'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Sub-pedido actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubPedido'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+components:
+  securitySchemes:
+    cookieSesion:
+      type: apiKey
+      in: cookie
+      name: ccv_sesion
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Clave única por usuario y ruta. Vigencia 24 horas.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 255
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Mismo valor de la cookie `ccv_csrf`.
+      schema:
+        type: string
+    Pagina:
+      name: pagina
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PorPagina:
+      name: por_pagina
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    IdPedido:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    IdSubPedido:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+
+  responses:
+    Error:
+      description: Error con el formato único
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [codigo, mensaje]
+          properties:
+            codigo:
+              type: string
+              example: validacion_invalida
+            mensaje:
+              type: string
+            detalles:
+              description: Solo para errores de validación.
+              oneOf:
+                - type: object
+                - type: array
+                  items:
+                    type: object
+
+    Paginacion:
+      type: object
+      required: [pagina, por_pagina, total, paginas]
+      properties:
+        pagina:
+          type: integer
+        por_pagina:
+          type: integer
+        total:
+          type: integer
+        paginas:
+          type: integer
+
+    CheckoutRequest:
+      type: object
+      required: [direccion, metodo_pago, items]
+      additionalProperties: true
+      properties:
+        direccion:
+          type: object
+          required: [texto, latitud, longitud]
+          properties:
+            texto:
+              type: string
+              minLength: 5
+              maxLength: 500
+            latitud:
+              type: number
+              minimum: -90
+              maximum: 90
+            longitud:
+              type: number
+              minimum: -180
+              maximum: 180
+        metodo_pago:
+          type: string
+          enum: [tarjeta, pse, nequi]
+          description: El efectivo llega en la Etapa 4.
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            required: [variante_id, cantidad]
+            properties:
+              variante_id:
+                type: integer
+              cantidad:
+                type: integer
+                minimum: 1
+                maximum: 999
+          description: >
+            Todos los ítems deben ser del mismo local (Etapa 2). Cualquier
+            monto enviado por el cliente se ignora: los precios salen de la
+            base de datos.
+
+    EstadoSubPedido:
+      type: string
+      enum:
+        - pendiente
+        - preparando
+        - enviado
+        - entregado
+        - en_disputa
+        - cancelado
+        - reembolsado
+        - reembolsado_parcial
+
+    Pedido:
+      type: object
+      required: [id, usuario_id, estado, metodo_pago, total, creado_en]
+      properties:
+        id:
+          type: integer
+        usuario_id:
+          type: integer
+        estado:
+          type: string
+          enum: [pendiente_pago, en_proceso, completado, cancelado, reembolsado, expirado]
+        metodo_pago:
+          type: string
+          enum: [tarjeta, pse, nequi, efectivo, manual]
+        total:
+          type: integer
+          description: Pesos. Suma de los totales de los sub-pedidos.
+        direccion:
+          type: object
+          properties:
+            texto:
+              type: string
+            latitud:
+              type: number
+            longitud:
+              type: number
+        config_snapshot:
+          type: object
+          description: Configuración congelada al crear el pedido (sección 4.2).
+        creado_en:
+          type: string
+          format: date-time
+        sub_pedidos:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubPedido'
+
+    SubPedido:
+      type: object
+      required: [id, pedido_id, local_id, estado, total]
+      properties:
+        id:
+          type: integer
+        pedido_id:
+          type: integer
+        local_id:
+          type: integer
+        nombre_local:
+          type: string
+        subtotal_productos:
+          type: integer
+        costo_envio:
+          type: integer
+        comision:
+          type: integer
+        total:
+          type: integer
+        estado:
+          $ref: '#/components/schemas/EstadoSubPedido'
+        evidencia_envio:
+          type: string
+          nullable: true
+        entrega_confirmada_por:
+          type: string
+          nullable: true
+          enum: [comprador, vendedor, sistema]
+        fecha_entrega:
+          type: string
+          format: date-time
+          nullable: true
+        saldo_liberado_en:
+          type: string
+          format: date-time
+          nullable: true
+          description: Nulo hasta que el job de retención libere el saldo (Etapa 4).
+        detalles:
+          type: array
+          items:
+            $ref: '#/components/schemas/DetalleProducto'
+
+    DetalleProducto:
+      type: object
+      properties:
+        id:
+          type: integer
+        variante_id:
+          type: integer
+        nombre_producto:
+          type: string
+        atributos_elegidos:
+          type: object
+          nullable: true
+        cantidad:
+          type: integer
+        precio_unitario:
+          type: integer
+
+    ListaPedidos:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pedido'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
+
+    ListaSubPedidos:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubPedido'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
+
+    Pago:
+      type: object
+      required: [id, referencia, monto, estado]
+      properties:
+        id:
+          type: integer
+        tipo_pago:
+          type: string
+          enum: [pedido, publicidad]
+        pedido_id:
+          type: integer
+          nullable: true
+        referencia:
+          type: string
+          description: Única. Generada por el backend con bytes aleatorios.
+        id_transaccion_wompi:
+          type: string
+          nullable: true
+        metodo_pago:
+          type: string
+          enum: [tarjeta, pse, nequi, efectivo, manual]
+        monto:
+          type: integer
+        monto_reembolsado:
+          type: integer
+        estado:
+          type: string
+          enum: [pendiente, aprobado, rechazado, reembolsado, reembolsado_parcial]
+        fecha_creacion:
+          type: string
+          format: date-time
+        fecha_actualizacion:
+          type: string
+          format: date-time
+
+    PagoCreado:
+      type: object
+      required: [pago, checkout]
+      properties:
+        pago:
+          $ref: '#/components/schemas/Pago'
+        checkout:
+          type: object
+          required: [llave_publica, referencia, monto_en_centavos, moneda, firma_integridad]
+          properties:
+            llave_publica:
+              type: string
+              description: Llave pública de Wompi (pub_test_ en sandbox).
+            referencia:
+              type: string
+            monto_en_centavos:
+              type: integer
+            moneda:
+              type: string
+              enum: [COP]
+            firma_integridad:
+              type: string
+              description: SHA256 de referencia + monto + moneda + secreto de integridad.
+            url_checkout:
+              type: string
+              format: uri
+              nullable: true
+              description: URL del Web Checkout de Wompi.
+
+    EventoWompi:
+      type: object
+      required: [event, data, signature, timestamp]
+      properties:
+        event:
+          type: string
+          example: transaction.updated
+        data:
+          type: object
+          properties:
+            transaction:
+              type: object
+              required: [id, reference, status, amount_in_cents]
+              properties:
+                id:
+                  type: string
+                reference:
+                  type: string
+                status:
+                  type: string
+                  enum: [PENDING, APPROVED, DECLINED, VOIDED, ERROR]
+                amount_in_cents:
+                  type: integer
+                currency:
+                  type: string
+                customer_email:
+                  type: string
+                payment_method_type:
+                  type: string
+        environment:
+          type: string
+          enum: [test, prod]
+        signature:
+          type: object
+          required: [properties, checksum]
+          properties:
+            properties:
+              type: array
+              items:
+                type: string
+              example: [transaction.id, transaction.status, transaction.amount_in_cents]
+            checksum:
+              type: string
+        timestamp:
+          type: integer
+          description: UNIX timestamp usado en la firma.
+        sent_at:
+          type: string
+          format: date-time

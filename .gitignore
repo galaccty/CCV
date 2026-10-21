@@ -2,8 +2,14 @@
 node_modules/
 generated/
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+
+# Claves y datos locales (nunca deben viajar en el repositorio)
+pgdata/
+*.pem
+*.p12
+*.pfx
 
 # Prisma
 /generated/prisma

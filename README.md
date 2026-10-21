@@ -35,20 +35,60 @@ Las rutas están en `PGBIN`, `PGDATA` y `PGLOG`, dentro del `.env`. Si algún d�
 movés la instalación, cambias esas líneas y nada más.
 
 > **El log está fuera de la carpeta de datos a propósito.** Si estuviera dentro,
-> abrirlo para ver qué pasa le bloquearía el archivo al servidor por el bloqueo
-> de archivos de Windows, y PostgreSQL se quedaría trabado en
-> "the database system is starting up". El log está en
-> `C:\Users\anturi\pgdata-server.log`.
+> abrirlo para ver qué pasa le bloquea el archivo al servidor por el bloqueo de
+> archivos de Windows. El log está en `C:\Users\anturi\pgdata-server.log`
+> (lo controla `PGLOG` en el `.env`).
 
-> Si alguna vez la base queda trabada en "starting up", es casi siempre eso.
-> `npm run db:parar`, esperá un momento y `npm run db:iniciar`.
+### Si la base queda en "starting up"
+
+No adivines: el log dice qué pasó. En PowerShell:
+
+```powershell
+Get-Content C:\Users\anturi\pgdata-server.log -Tail 40
+```
+
+Qué buscar, en orden:
+
+| Línea en el log | Qué significa |
+|---|---|
+| `database system was interrupted; last known up at ...` | La base se cerró de golpe (corte de luz, Ctrl+C, o se mató el proceso). Está haciendo recuperación con el WAL. |
+| `redo done at ...` y después `database system is ready to accept connections` | La recuperación terminó bien. No hay nada que hacer. |
+| `could not open file "./server.log": sharing violation` | El log estaba dentro de `PGDATA` y otro programa lo tenía abierto. Por eso ahora vive fuera. |
+| `terminated by exception 0xC000013A` | El proceso recibió Ctrl+C o se cerró la consola que lo contenía. |
+
+La recuperación normal tarda segundos. Si después de un minuto sigue en
+`starting up`, o el log se queda repitiendo `sharing violation`:
+
+```bash
+npm run db:parar
+npm run db:iniciar
+```
+
+Si `db:parar` dice que no hay servidor pero el puerto 5432 sigue ocupado, hay un
+proceso `postgres.exe` colgado: cerralo desde el Administrador de tareas y
+volvé a arrancar. **Nunca borres `C:\Users\anturi\pgdata`**: ahí están tus datos.
+
+> **Qué pasó la vez que se trabó.** Fueron dos cosas juntas, no una: la base
+> había recibido un cierre brusco (`0xC000013A`) y estaba recuperando, y encima
+> el log estaba dentro de `PGDATA`, así que al leerlo con `Get-Content` Windows
+> le bloqueó el archivo al servidor. Mover el log afuera elimina la segunda;
+> la primera se resuelve sola con la recuperación. Por eso el README pide mirar
+> el log antes de suponer la causa.
 
 Hay dos bases:
 
 - **`ccv`** — tu desarrollo. Acá va `npm run db:migrate` y `npm run seed`.
 - **`ccv_test`** — la usan las pruebas. Las pruebas cambian el nombre de la
-  base automáticamente: **nunca tocan tu base de desarrollo**, así que podés
-  correr `npm test` sin miedo de llenarla de usuarios falsos.
+  base automáticamente: **nunca tocan tu base de desarrollo**. Además,
+  `npm test` vacía `ccv_test` antes y después de correr (script
+  `scripts/limpiar-base-pruebas.js`), así no se acumulan usuarios ni pedidos
+  de corridas viejas.
+
+> **Si la base está apagada, las pruebas fallan.** No se saltan solas: el error
+> dice `Levantala con: npm run db:iniciar`. Es a propósito, porque las pruebas
+> que más importan (dinero, stock, pedidos) son justo las que necesitan base y
+> antes quedaban en verde sin haberse ejecutado. Para correr solo las que no
+> necesitan base existe `PERMITIR_SALTAR_BD=1`, que **se ignora en CI**.
 
 Si preferís una base en la nube (Supabase o Neon dan una gratis), poné esa
 `DATABASE_URL` en el `.env` y creá la base `_test` a mano.

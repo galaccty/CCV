@@ -5,9 +5,9 @@
 #   2. La verificacion de que existen los doce archivos de prueba.
 #   3. Todas las pruebas automaticas.
 #
-# Las pruebas que necesitan base de datos corren solo si hay DATABASE_URL
-# configurada. En GitHub Actions hay un Postgres de servicio, asi que si
-# corren completas.
+# Las pruebas que necesitan base de datos SIEMPRE corren en CI: si la base no
+# responde, fallan con un mensaje claro. No existe forma de saltarlas en CI
+# (PERMITIR_SALTAR_BD se ignora cuando CI esta definido).
 
 name: CI
 

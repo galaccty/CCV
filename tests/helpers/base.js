@@ -12,10 +12,14 @@
 import './entorno.js';
 import { prisma } from '../../src/lib/prisma.js';
 import { BASE_DE_PRUEBAS } from './entorno.js';
+import { mensajeSinBase, puedeSaltarSinBase } from './politica-base.js';
 
-export { BASE_DE_PRUEBAS, prisma };
+export { BASE_DE_PRUEBAS, prisma, puedeSaltarSinBase };
 
 let conexionVerificada = null;
+
+/** Mensaje unico para que el fallo diga exactamente que hacer. */
+export const MENSAJE_SIN_BASE = mensajeSinBase(BASE_DE_PRUEBAS);
 
 /** true si hay una base de datos a la que conectarse. */
 export async function baseDeDatosDisponible() {
@@ -30,14 +34,22 @@ export async function baseDeDatosDisponible() {
 }
 
 /**
- * Opciones para `test(...)`: se saltea la prueba si no hay base de datos.
- * A diferencia de un `skip` fijo, aqui SI depende del resultado del chequeo.
+ * Opciones para `test(...)`.
+ *
+ * Si la base responde: {} y la prueba corre.
+ * Si no responde: por defecto LANZA, para que la prueba falle con un mensaje
+ * claro. Antes se saltaba sola y la suite quedaba en verde sin haber probado
+ * lo que importa. Solo se salta con PERMITIR_SALTAR_BD=1 y fuera de CI.
  */
 export async function opcionesConBase() {
   const hay = await baseDeDatosDisponible();
-  return hay
-    ? {}
-    : { skip: `sin base de datos conectada (las pruebas apuntan a ${BASE_DE_PRUEBAS})` };
+  if (hay) return {};
+
+  if (puedeSaltarSinBase()) {
+    return { skip: `sin base de datos (PERMITIR_SALTAR_BD=1): ${BASE_DE_PRUEBAS}` };
+  }
+
+  throw new Error(MENSAJE_SIN_BASE);
 }
 
 /** Marca el correo como verificado sin pasar por el enlace. */

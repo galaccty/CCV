@@ -99,9 +99,48 @@ function aplicarMigraciones() {
   });
 }
 
+/**
+ * La configuracion es dato de arranque del negocio, no de una prueba en
+ * particular. Se siembra una vez aca para que el checkout tenga los valores
+ * congelados que espera la especificacion.
+ */
+const CONFIGURACION_BASE = [
+  ['porcentaje_comision', '5', 'numero'],
+  ['comision_minima', '2000', 'entero'],
+  ['pedido_minimo', '30000', 'entero'],
+  ['tarifa_base_envio', '2000', 'entero'],
+  ['tarifa_por_km', '800', 'entero'],
+  ['dias_retencion', '5', 'entero'],
+  ['limite_deuda', '50000', 'entero'],
+  ['plazo_dias', '15', 'entero'],
+  ['dias_auto_entrega', '7', 'entero'],
+  ['minutos_expiracion_pago', '30', 'entero'],
+  ['horas_aceptacion', '48', 'entero'],
+];
+
+async function sembrarConfiguracion() {
+  const prisma = new PrismaClient({
+    datasources: { db: { url: urlPruebas.toString() } },
+  });
+
+  try {
+    for (const [clave, valor, tipo] of CONFIGURACION_BASE) {
+      await prisma.configuracion.upsert({
+        where: { clave },
+        create: { clave, valor, tipo },
+        update: { valor, tipo },
+      });
+    }
+    console.log(`[pruebas] ${nombreBase}: configuracion base sembrada.`);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
 try {
   await recrearBase();
   aplicarMigraciones();
+  await sembrarConfiguracion();
   console.log(`[pruebas] ${nombreBase}: migraciones aplicadas, lista para correr.`);
 } catch (err) {
   if (process.env.PERMITIR_SALTAR_BD === '1' && !process.env.CI) {

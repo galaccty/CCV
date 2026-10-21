@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Centro Comercial Virtual - API
-  version: 0.4.0
+  version: 0.4.1
   description: |
     Contrato de la API del backend. Es la fuente de verdad: las rutas se
     implementan después de quedar documentadas aquí.
@@ -416,7 +416,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListaLocales'
+                $ref: '#/components/schemas/ListaLocalesPublicos'
         '400':
           $ref: '#/components/responses/Error'
 
@@ -434,7 +434,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Local'
+                $ref: '#/components/schemas/LocalPublico'
         '404':
           $ref: '#/components/responses/Error'
 
@@ -464,7 +464,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListaProductos'
+                $ref: '#/components/schemas/ListaProductosPublicos'
         '404':
           $ref: '#/components/responses/Error'
 
@@ -474,8 +474,9 @@ paths:
       summary: Ver un producto activo con sus variantes activas
       description: |
         Solo devuelve productos activos de locales que pueden vender. Las
-        variantes inactivas no se incluyen. Por privacidad del inventario, cada
-        variante informa `disponible` (hay o no hay) y no la cantidad exacta.
+        variantes inactivas no se incluyen. Cada variante informa `disponible`;
+        `unidades_restantes` solo aparece cuando quedan cinco unidades o menos.
+        Si hay más de cinco, la cantidad exacta no se expone.
       operationId: verProducto
       security: []
       parameters:
@@ -1576,7 +1577,51 @@ components:
           description: Pesos.
         disponible:
           type: boolean
-          description: Hay stock disponible; no se expone la cantidad exacta.
+          description: Hay stock disponible.
+        unidades_restantes:
+          type: integer
+          minimum: 0
+          maximum: 5
+          description: |
+            Solo aparece cuando quedan cinco unidades o menos. Si hay más de
+            cinco, la cantidad exacta no se expone.
+
+    ProductoCatalogoPublico:
+      type: object
+      required: [id, local_id, categoria_global_id, nombre, activo, variantes]
+      properties:
+        id:
+          type: integer
+        local_id:
+          type: integer
+        categoria_global_id:
+          type: integer
+        subcategoria_local_id:
+          type: integer
+          nullable: true
+        nombre:
+          type: string
+        descripcion:
+          type: string
+          nullable: true
+        fotos:
+          type: array
+          items:
+            type: string
+          nullable: true
+        atributos:
+          type: object
+          additionalProperties: true
+          nullable: true
+        activo:
+          type: boolean
+        creado_en:
+          type: string
+          format: date-time
+        variantes:
+          type: array
+          items:
+            $ref: '#/components/schemas/VariantePublica'
 
     LocalResumen:
       type: object
@@ -1678,6 +1723,48 @@ components:
           items:
             $ref: '#/components/schemas/Producto'
 
+    LocalPublico:
+      type: object
+      required: [id, usuario_id, rubro_id, nombre, latitud, longitud, estado]
+      properties:
+        id:
+          type: integer
+        usuario_id:
+          type: integer
+        rubro_id:
+          type: integer
+        nombre:
+          type: string
+        logo_url:
+          type: string
+          nullable: true
+        banner_fondo_url:
+          type: string
+          nullable: true
+        latitud:
+          type: number
+        longitud:
+          type: number
+        estado:
+          $ref: '#/components/schemas/EstadoLocal'
+        promedio_calificacion:
+          type: number
+        total_calificaciones:
+          type: integer
+        creado_en:
+          type: string
+          format: date-time
+        rubro:
+          $ref: '#/components/schemas/Rubro'
+        subcategorias:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubcategoriaLocal'
+        productos:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductoCatalogoPublico'
+
     ListaLocales:
       type: object
       required: [datos, paginacion]
@@ -1689,6 +1776,17 @@ components:
         paginacion:
           $ref: '#/components/schemas/Paginacion'
 
+    ListaLocalesPublicos:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocalPublico'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
+
     ListaProductos:
       type: object
       required: [datos, paginacion]
@@ -1697,6 +1795,17 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Producto'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
+
+    ListaProductosPublicos:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductoCatalogoPublico'
         paginacion:
           $ref: '#/components/schemas/Paginacion'
 

@@ -31,6 +31,20 @@ function sufijo() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function comprobarVariantePublica(
+  variante,
+  { disponible, unidadesRestantes },
+) {
+  assert.equal(variante.disponible, disponible);
+  assert.equal(Object.hasOwn(variante, 'stock'), false);
+
+  if (unidadesRestantes === undefined) {
+    assert.equal(Object.hasOwn(variante, 'unidades_restantes'), false);
+  } else {
+    assert.equal(variante.unidades_restantes, unidadesRestantes);
+  }
+}
+
 function datosLocal(rubroId, extra = {}) {
   return {
     rubro_id: rubroId,
@@ -141,6 +155,45 @@ describe('GET /api/v1/catalogo publico', () => {
     assert.equal(productos.body.datos.length, 0);
   });
 
+  test('todas las rutas publicas ocultan el stock exacto y solo muestran unidades hasta 5', CON_BASE, async () => {
+    const alto = await crearCatalogo({ stockInicial: 10 });
+    const bajo = await crearCatalogo({ stockInicial: 5 });
+    const cero = await crearCatalogo({ stockInicial: 0 });
+    const anonimo = cliente();
+
+    const casos = [
+      { catalogo: alto, disponible: true, unidadesRestantes: undefined },
+      { catalogo: bajo, disponible: true, unidadesRestantes: 5 },
+      { catalogo: cero, disponible: false, unidadesRestantes: 0 },
+    ];
+
+    for (const caso of casos) {
+      const local = await anonimo.get(`/api/v1/locales/${caso.catalogo.local.id}`);
+      assert.equal(local.status, 200);
+      const productoEnLocal = local.body.productos.find(
+        (p) => p.id === caso.catalogo.producto.id,
+      );
+      assert.ok(productoEnLocal);
+      comprobarVariantePublica(productoEnLocal.variantes[0], caso);
+
+      const productos = await anonimo.get(
+        `/api/v1/locales/${caso.catalogo.local.id}/productos`,
+      );
+      assert.equal(productos.status, 200);
+      const productoEnLista = productos.body.datos.find(
+        (p) => p.id === caso.catalogo.producto.id,
+      );
+      assert.ok(productoEnLista);
+      comprobarVariantePublica(productoEnLista.variantes[0], caso);
+
+      const detalle = await anonimo.get(
+        `/api/v1/productos/${caso.catalogo.producto.id}`,
+      );
+      assert.equal(detalle.status, 200);
+      comprobarVariantePublica(detalle.body.variantes[0], caso);
+    }
+  });
+
   test('detalle publico: solo variantes activas, disponibilidad y resumen del local', CON_BASE, async () => {
     const catalogo = await crearCatalogo({ stockInicial: 4 });
     await crearVariante(prisma, {
@@ -161,8 +214,10 @@ describe('GET /api/v1/catalogo publico', () => {
     assert.equal(r.body.local.rubro.id, catalogo.rubro.id);
     assert.equal(r.body.variantes.length, 1);
     assert.equal(r.body.variantes[0].id, catalogo.variante.id);
-    assert.equal(r.body.variantes[0].disponible, true);
-    assert.equal(Object.hasOwn(r.body.variantes[0], 'stock'), false);
+    comprobarVariantePublica(r.body.variantes[0], {
+      disponible: true,
+      unidadesRestantes: 4,
+    });
   });
 
   test('detalle publico: disponible es false cuando no hay stock', CON_BASE, async () => {
@@ -173,7 +228,10 @@ describe('GET /api/v1/catalogo publico', () => {
 
     assert.equal(r.status, 200);
     assert.equal(r.body.variantes.length, 1);
-    assert.equal(r.body.variantes[0].disponible, false);
+    comprobarVariantePublica(r.body.variantes[0], {
+      disponible: false,
+      unidadesRestantes: 0,
+    });
   });
 
   test('detalle publico: nunca expone productos ni locales inactivos', CON_BASE, async () => {

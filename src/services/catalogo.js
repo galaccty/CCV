@@ -61,15 +61,47 @@ export function serializarProducto(producto) {
 }
 
 export function serializarVariantePublica(variante) {
+  const existencias = Number(variante.stock);
+
   return {
     id: variante.id,
     producto_id: variante.productoId,
     atributos: variante.atributos,
     precio: variante.precio,
-    // El inventario exacto no se expone en el detalle publico: solo si hay
-    // unidades disponibles o no.
-    disponible: variante.stock > 0,
+    // El inventario exacto no se expone en el catalogo publico. Cuando quedan
+    // cinco unidades o menos se informa el numero para mostrar urgencia; por
+    // encima de cinco solo se dice que hay disponibilidad.
+    disponible: existencias > 0,
+    ...(existencias <= 5 ? { unidades_restantes: existencias } : {}),
   };
+}
+
+export function serializarProductoCatalogoPublico(producto) {
+  return {
+    id: producto.id,
+    local_id: producto.localId,
+    categoria_global_id: producto.categoriaGlobalId,
+    subcategoria_local_id: producto.subcategoriaLocalId,
+    nombre: producto.nombre,
+    descripcion: producto.descripcion,
+    fotos: producto.fotos,
+    atributos: producto.atributos,
+    activo: producto.activo,
+    creado_en: producto.creadoEn,
+    variantes: (producto.variantes ?? []).map(serializarVariantePublica),
+  };
+}
+
+export function serializarLocalPublico(local) {
+  const serializado = serializarLocal(local);
+
+  if (local.productos) {
+    serializado.productos = local.productos.map(
+      serializarProductoCatalogoPublico,
+    );
+  }
+
+  return serializado;
 }
 
 export function serializarLocalResumen(local) {
@@ -195,7 +227,7 @@ export async function obtenerLocal({ id }) {
 
   if (!local) throw errorNoEncontrado('Local no encontrado.');
 
-  return convertirBigIntAJson(serializarLocal(local));
+  return convertirBigIntAJson(serializarLocalPublico(local));
 }
 
 export async function listarProductosDeLocal({
@@ -235,7 +267,7 @@ export async function listarProductosDeLocal({
 
   return convertirBigIntAJson(
     envolverLista(
-      productos.map(serializarProducto),
+      productos.map(serializarProductoCatalogoPublico),
       { pagina, porPagina },
       total,
     ),

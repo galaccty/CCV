@@ -81,7 +81,7 @@ export const esquemaVerificarEmail = z.object({
 // ---------------------------------------------------------------------------
 
 export const ESTADOS_SUB_PEDIDO = [
-  'pendiente',
+  'por_aceptar',
   'preparando',
   'enviado',
   'entregado',

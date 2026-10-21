@@ -83,7 +83,7 @@ describe('POST /api/v1/pedidos', () => {
     assert.equal(sub.comision, 2000);
     assert.equal(sub.costo_envio, 2000);
     assert.equal(sub.total, 32000);
-    assert.equal(sub.estado, 'pendiente');
+    assert.equal(sub.estado, 'por_aceptar');
     assert.equal(sub.detalles.length, 1);
     assert.equal(sub.detalles[0].precio_unitario, 10000);
     assert.equal(sub.detalles[0].cantidad, 3);

@@ -5,9 +5,9 @@ import { ErrorApi } from '../lib/errores.js';
  * ===============================================
  * Las transiciones validas de la Etapa 2 son:
  *
- *   pendiente  -> preparando -> enviado -> entregado
- *   pendiente  -> cancelado
- *   preparando -> cancelado
+ *   por_aceptar -> preparando -> enviado -> entregado
+ *   por_aceptar -> cancelado
+ *   preparando  -> cancelado
  *
  * `entregado -> en_disputa` se deja declarada porque la disputa existe en la
  * especificacion, pero la ruta que la abre llega en la Etapa 4. No hay ninguna
@@ -15,7 +15,7 @@ import { ErrorApi } from '../lib/errores.js';
  */
 
 export const TRANSICIONES_SUB_PEDIDO = Object.freeze({
-  pendiente: ['preparando', 'cancelado'],
+  por_aceptar: ['preparando', 'cancelado'],
   preparando: ['enviado', 'cancelado'],
   enviado: ['entregado'],
   entregado: ['en_disputa'],
@@ -48,11 +48,18 @@ export function exigirTransicion(desde, hacia) {
 
 /**
  * Deriva pedido.estado a partir de sus sub_pedidos (seccion 4.3).
- * `expirado` es la excepcion: lo escribe solo el job de expiracion y esta
- * funcion nunca lo sobrescribe.
+ * `expirado` y `reembolso_pendiente` son estados explicitos: no se derivan de
+ * los sub_pedidos y esta funcion nunca los sobrescribe. El primero lo escribe
+ * el job de expiracion; el segundo, la transaccion B cuando el reembolso real
+ * queda pendiente de ejecucion manual.
  */
 export function derivarEstadoPedido({ estadoActual, estadosSubPedidos }) {
-  if (estadoActual === 'expirado') return 'expirado';
+  if (
+    estadoActual === 'expirado' ||
+    estadoActual === 'reembolso_pendiente'
+  ) {
+    return estadoActual;
+  }
 
   const estados = estadosSubPedidos ?? [];
   if (estados.length === 0) {

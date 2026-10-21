@@ -203,7 +203,10 @@ paths:
                     type: boolean
                     description: |
                       true cuando la confirmacion no pudo descontar stock y se
-                      registro el reembolso automatico (transaccion B).
+                      registro la transaccion B. Con el proveedor falso el
+                      reembolso queda completado; con Wompi real queda
+                      `pendiente` y el pedido pasa a `reembolso_pendiente` para
+                      que el admin devuelva el dinero desde el panel de Wompi.
         '401':
           description: Firma inválida
           content:
@@ -246,7 +249,7 @@ paths:
     post:
       tags: [Sub-pedidos]
       summary: Aceptar un sub-pedido (vendedor)
-      description: Transición `pendiente` -> `preparando`.
+      description: Transición `por_aceptar` -> `preparando`.
       operationId: aceptarSubPedido
       security:
         - cookieSesion: []
@@ -476,7 +479,7 @@ components:
     EstadoSubPedido:
       type: string
       enum:
-        - pendiente
+        - por_aceptar
         - preparando
         - enviado
         - entregado
@@ -495,7 +498,7 @@ components:
           type: integer
         estado:
           type: string
-          enum: [pendiente_pago, en_proceso, completado, cancelado, reembolsado, expirado]
+          enum: [pendiente_pago, en_proceso, completado, cancelado, reembolsado, reembolso_pendiente, expirado]
         metodo_pago:
           type: string
           enum: [tarjeta, pse, nequi, efectivo, manual]

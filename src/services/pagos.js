@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js';
 import { withTransaccion } from '../lib/transaccion.js';
 import { convertirBigIntAJson } from '../lib/dinero.js';
 import { ErrorApi, errorNoEncontrado } from '../lib/errores.js';
+import { config } from '../config/entorno.js';
 import { completarEnTx } from './idempotencia.js';
 import * as wompi from '../lib/wompi.js';
 
@@ -22,6 +23,33 @@ import * as wompi from '../lib/wompi.js';
 export const verificarFirmaEvento = wompi.verificarFirmaEvento;
 export const consultarTransaccion = wompi.consultarTransaccion;
 export const esProveedorFalso = wompi.esProveedorFalso;
+
+/**
+ * Politica de reembolsos.
+ *
+ * Con el proveedor falso se simula un reembolso completado. Con Wompi real se
+ * registra la obligacion como pendiente y el admin la ejecuta desde el panel de
+ * Wompi; no se marca dinero devuelto sin que Wompi lo confirme.
+ *
+ * El override existe SOLO para las pruebas: permite ejercitar la rama real sin
+ * hacer llamadas HTTP. Nunca se activa en produccion.
+ */
+let reembolsoManualParaPruebas = null;
+
+export function reembolsosSonManuales() {
+  if (reembolsoManualParaPruebas !== null) return reembolsoManualParaPruebas;
+  return !wompi.esProveedorFalso();
+}
+
+export function establecerReembolsoManualParaPruebas(valor) {
+  if (!config.esPrueba) {
+    throw new Error('El modo de reembolso de prueba solo se puede cambiar en NODE_ENV=test.');
+  }
+  if (valor !== null && typeof valor !== 'boolean') {
+    throw new Error('El modo de reembolso de prueba debe ser true, false o null.');
+  }
+  reembolsoManualParaPruebas = valor;
+}
 
 // Utilidades del proveedor falso para las pruebas. Se reexportan desde aqui
 // para que ningun archivo fuera de este modulo importe `lib/wompi.js`

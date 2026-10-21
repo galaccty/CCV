@@ -1,5 +1,5 @@
 import './helpers/entorno.js';
-import { test, describe, after, beforeEach } from 'node:test';
+import { test, describe, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import request from 'supertest';
@@ -10,6 +10,7 @@ import { crearCatalogo } from './helpers/datos.js';
 import { config } from '../src/config/entorno.js';
 import {
   auditoriaWompiFalsa,
+  establecerReembolsoManualParaPruebas,
   limpiarWompiFalso,
   registrarTransaccionFalsa,
 } from '../src/services/pagos.js';
@@ -33,6 +34,10 @@ after(async () => {
 
 beforeEach(() => {
   limpiarWompiFalso();
+});
+
+afterEach(() => {
+  establecerReembolsoManualParaPruebas(null);
 });
 
 function sha256(texto) {
@@ -134,6 +139,35 @@ async function crearPagoPendiente({
   };
 }
 
+/**
+ * Deja un pago pendiente con el stock agotado por otro comprador y el evento
+ * aprobado listo para enviar. La transaccion A fallara por stock; la prueba
+ * decide si la B corre en modo falso o en modo real/manual.
+ */
+async function prepararStockInsuficiente() {
+  const caso = await crearPagoPendiente({ cantidad: 3, stockInicial: 3 });
+
+  await withTransaccion(async (tx) => {
+    await descontarStock(tx, caso.variante.id, 3);
+  });
+
+  const idTransaccion = `tx-${claveUnica()}`;
+  registrarTransaccionFalsa({
+    id: idTransaccion,
+    reference: caso.pago.referencia,
+    status: 'APPROVED',
+    amountInCents: caso.montoEnCentavos,
+  });
+
+  const evento = crearEvento({
+    id: idTransaccion,
+    reference: caso.pago.referencia,
+    amountInCents: caso.montoEnCentavos,
+  });
+
+  return { ...caso, idTransaccion, evento };
+}
+
 describe('POST /api/v1/pagos/webhook', () => {
   test('aprueba el pago, descuenta stock y escribe el ledger en la misma transaccion', CON_BASE, async () => {
     const { variante, local, pedido, pago, montoEnCentavos } =
@@ -171,7 +205,7 @@ describe('POST /api/v1/pagos/webhook', () => {
       include: { subPedidos: { include: { detalles: true } } },
     });
     assert.equal(pedidoDb.estado, 'en_proceso');
-    assert.equal(pedidoDb.subPedidos[0].estado, 'pendiente');
+    assert.equal(pedidoDb.subPedidos[0].estado, 'por_aceptar');
     assert.equal(pedidoDb.subPedidos[0].saldoLiberadoEn, null);
 
     const varianteDb = await prisma.productoVariante.findUnique({
@@ -449,7 +483,7 @@ describe('POST /api/v1/pagos/webhook', () => {
     assert.equal(pedidoDb.estado, 'reembolsado');
     assert.equal(pedidoDb.subPedidos[0].estado, 'reembolsado');
 
-    // El checkout deja el historial inicial (null -> pendiente) y la
+    // El checkout deja el historial inicial (null -> por_aceptar) y la
     // transaccion B agrega el cambio a reembolsado, con usuario nulo porque lo
     // hizo el sistema.
     const historial = await prisma.historialEstadoSubPedido.findMany({
@@ -461,7 +495,7 @@ describe('POST /api/v1/pagos/webhook', () => {
       (fila) => fila.estadoNuevo === 'reembolsado',
     );
     assert.ok(pasoAReembolsado, 'debe quedar el paso a reembolsado');
-    assert.equal(pasoAReembolsado.estadoAnterior, 'pendiente');
+    assert.equal(pasoAReembolsado.estadoAnterior, 'por_aceptar');
     assert.equal(pasoAReembolsado.cambiadoPor, null);
 
     const varianteDb = await prisma.productoVariante.findUnique({
@@ -489,5 +523,114 @@ describe('POST /api/v1/pagos/webhook', () => {
       where: { pagoId: pago.id },
     });
     assert.equal(reembolsos, 1);
+  });
+
+  test('transaccion B real: stock insuficiente deja reembolso pendiente y responde 200', CON_BASE, async () => {
+    const { variante, pedido, pago, evento } =
+      await prepararStockInsuficiente();
+
+    // Simula el modo real sin llamadas HTTP: la politica de reembolso es
+    // manual, pero la consulta a Wompi sigue saliendo del proveedor falso.
+    establecerReembolsoManualParaPruebas(true);
+
+    const r = await enviarEvento(evento);
+
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body, {
+      recibido: true,
+      resultado: 'ok',
+      reembolso: true,
+    });
+
+    const pagoDb = await prisma.pago.findUnique({
+      where: { id: pago.id },
+      include: { reembolsos: true },
+    });
+    assert.equal(pagoDb.estado, 'aprobado');
+    assert.equal(pagoDb.montoReembolsado, 0n);
+    assert.equal(pagoDb.idTransaccionWompi, evento.data.transaction.id);
+    assert.equal(pagoDb.reembolsos.length, 1);
+    assert.equal(pagoDb.reembolsos[0].monto, 32000n);
+    assert.equal(pagoDb.reembolsos[0].estado, 'pendiente');
+    assert.equal(
+      pagoDb.reembolsos[0].motivo,
+      'stock_insuficiente_al_confirmar_pago',
+    );
+
+    const pedidoDb = await prisma.pedido.findUnique({
+      where: { id: pedido.id },
+      include: { subPedidos: true },
+    });
+    assert.equal(pedidoDb.estado, 'reembolso_pendiente');
+    assert.equal(pedidoDb.subPedidos[0].estado, 'cancelado');
+    assert.equal(pedidoDb.subPedidos[0].saldoLiberadoEn, null);
+
+    const historial = await prisma.historialEstadoSubPedido.findMany({
+      where: { subPedidoId: pedidoDb.subPedidos[0].id },
+      orderBy: { id: 'asc' },
+    });
+    const pasoACancelado = historial.find(
+      (fila) => fila.estadoNuevo === 'cancelado',
+    );
+    assert.ok(pasoACancelado, 'debe quedar el paso a cancelado');
+    assert.equal(pasoACancelado.estadoAnterior, 'por_aceptar');
+    assert.equal(pasoACancelado.cambiadoPor, null);
+
+    const varianteDb = await prisma.productoVariante.findUnique({
+      where: { id: variante.id },
+    });
+    assert.equal(varianteDb.stock, 0);
+
+    // El pago si se recibio, pero el reembolso todavia no salio: no puede
+    // existir un movimiento de reembolso ni una venta.
+    const movimientos = await prisma.ledger.findMany({
+      where: { pagoId: pago.id },
+    });
+    assert.equal(movimientos.length, 1);
+    assert.equal(movimientos[0].tipo, 'pago_recibido');
+    assert.equal(movimientos[0].monto, 32000n);
+    assert.equal(movimientos[0].reembolsoId, null);
+  });
+
+  test('transaccion B real: el webhook repetido no duplica el reembolso pendiente', CON_BASE, async () => {
+    const { pedido, pago, evento } = await prepararStockInsuficiente();
+    establecerReembolsoManualParaPruebas(true);
+
+    const primero = await enviarEvento(evento);
+    const segundo = await enviarEvento(evento);
+
+    assert.equal(primero.status, 200, JSON.stringify(primero.body));
+    assert.equal(segundo.status, 200, JSON.stringify(segundo.body));
+    assert.equal(segundo.body.resultado, 'ok');
+
+    const reembolsos = await prisma.reembolso.findMany({
+      where: { pagoId: pago.id },
+    });
+    assert.equal(reembolsos.length, 1);
+    assert.equal(reembolsos[0].estado, 'pendiente');
+
+    const pagosRecibidos = await prisma.ledger.count({
+      where: { pagoId: pago.id, tipo: 'pago_recibido' },
+    });
+    assert.equal(pagosRecibidos, 1);
+
+    const pedidoDb = await prisma.pedido.findUnique({
+      where: { id: pedido.id },
+      include: { subPedidos: true },
+    });
+    const cancelaciones = await prisma.historialEstadoSubPedido.count({
+      where: {
+        subPedidoId: pedidoDb.subPedidos[0].id,
+        estadoNuevo: 'cancelado',
+      },
+    });
+    assert.equal(cancelaciones, 1);
+    assert.equal(pedidoDb.estado, 'reembolso_pendiente');
+
+    const eventos = await prisma.eventoWebhook.findMany({
+      where: { referencia: pago.referencia },
+    });
+    assert.equal(eventos.length, 2);
+    assert.equal(eventos.every((e) => e.procesado && e.resultado === 'ok'), true);
   });
 });

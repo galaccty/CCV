@@ -264,9 +264,13 @@ export async function verificarFirmaEvento(cuerpo, checksumCabecera) {
 }
 
 /**
- * Solicita un reembolso. En modo falso se registra localmente. En modo real
- * queda pendiente: el endpoint de reembolsos no esta verificado en la
- * documentacion oficial, asi que NO se inventa una URL.
+ * Solicita un reembolso. En modo falso se registra localmente.
+ *
+ * En modo real NO se usa todavia. La documentacion de Wompi ya describe la API
+ * de Reembolsos V2 (`POST /v1/refunds`), pero su implementacion queda detenida
+ * hasta confirmar con el negocio el contrato, los estados asincronicos y los
+ * metodos de pago cubiertos. Mientras tanto el reembolso se hace manualmente
+ * desde el panel de Wompi. No se inventa una URL ni se marca completado.
  */
 export async function solicitarReembolso(datos) {
   exigirFueraDeTransaccion('wompi.solicitarReembolso');
@@ -278,8 +282,7 @@ export async function solicitarReembolso(datos) {
   }
 
   throw new Error(
-    'El endpoint de reembolsos de Wompi no esta verificado en la ' +
-      'documentacion oficial. Revisar docs.wompi.co antes de activar el ' +
-      'proveedor real. (pendiente)',
+    'La API real de reembolsos de Wompi no esta integrada. Los reembolsos se ' +
+      'hacen manualmente desde el panel hasta confirmar el contrato de la API.',
   );
 }

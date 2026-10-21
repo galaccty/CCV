@@ -5,7 +5,10 @@ Backend del marketplace multi-vendedor. Node.js + Express + PostgreSQL.
 **Estado: Etapa 2 (corte vertical) implementada y verificada en modo de pruebas.**
 El proveedor de Wompi es falso por defecto: no hace llamadas HTTP y permite
 probar checkout, pago, webhook, stock y ledger completos. La integración real
-espera las llaves de sandbox y la verificación del endpoint de reembolsos.
+espera las llaves de sandbox. Mientras tanto, si un pago real no puede
+confirmarse por stock, el reembolso queda `pendiente`, el pedido pasa a
+`reembolso_pendiente` y el dinero se devuelve manualmente desde el panel de
+Wompi.
 
 La especificación completa vive en
 [`especificacion_centro_comercial_v4.md`](./especificacion_centro_comercial_v4.md).
@@ -335,7 +338,7 @@ archivo de prueba en `tests/invariantes/`.
 | 3 | El webhook responde 200 solo después | activo (200 después de procesar; 5xx si es transitorio) |
 | 4 | Wompi nunca dentro de una transacción | activo (3 capas) |
 | 5 | Los snapshots no se modifican | activo (triggers de la Etapa 2) |
-| 6 | Entregado ≠ dinero movido | pendiente, Etapa 4 |
+| 6 | Entregado ≠ dinero movido | parcial (reembolso pendiente bloquea elegibilidad y trigger; faltan job y disputas de la Etapa 4) |
 | 7 | Stock solo por el módulo de stock | activo (módulo único + concurrencia) |
 | 8 | La deuda se compensa solo en liquidación | pendiente, Etapa 4 |
 | 9 | El estado del local solo lo cambia `recalcular_estado_local` | pendiente, Etapa 4 |
@@ -362,13 +365,13 @@ terminar la Etapa 2:
 
 ```
 Invariantes estaticos: OK (1, 4 y 7 sin violaciones).
-tests 169 · pass 155 · fail 0 · skipped 14
+tests 171 · pass 158 · fail 0 · skipped 13
 ```
 
-Las 14 que se saltan son **todas invariantes que todavía no aplican**, y cada
+Las 13 que se saltan son **todas invariantes que todavía no aplican**, y cada
 una dice en pantalla por qué y en qué etapa se activa:
 
-- 4 del invariante 6 (el saldo se libera solo con el job de la Etapa 4).
+- 3 del invariante 6 (el job y las disputas llegan en la Etapa 4).
 - 4 del invariante 8 (liquidaciones de la Etapa 4).
 - 4 del invariante 9 (máquina de estados del local, Etapa 4).
 - 2 del invariante 11 (desactivar productos y retención, Etapas 3 y 6).
@@ -390,12 +393,13 @@ hecho, a propósito:
 
 - **Wompi real:** cargar `WOMPI_PUB_KEY`, `WOMPI_PRV_KEY`, `WOMPI_EVENTS_KEY` y
   `WOMPI_INTEGRITY_KEY`, poner `WOMPI_PROVEEDOR="real"` y probar el sandbox.
-  Falta verificar en la documentación oficial el endpoint de reembolsos y la
-  consulta de transacciones por referencia; por eso el reembolso automático
-  real se detiene con un error y una alerta en vez de marcar un reembolso falso.
+  La API de Reembolsos V2 (`POST /v1/refunds`) ya está identificada en la
+  documentación, pero no se integra hasta confirmar su contrato y los métodos de
+  pago cubiertos. Por eso, en modo real, la transacción B deja el reembolso en
+  `pendiente` y alerta al admin; no marca dinero devuelto sin que haya salido.
 - **Etapa 3:** locales, productos, variantes, categorías, búsqueda y checkout
   multi-local.
-- **Etapa 4:** efectivo, saldos, liquidaciones, disputas, ejecución real de
+- **Etapa 4:** efectivo, saldos, liquidaciones, disputas, ejecución automática de
   reembolsos, paneles y liberación del saldo retenido.
 - **Etapas 5 a 7:** notificaciones, calificaciones, home dinámica, hosting.
 

@@ -12,7 +12,7 @@ import { derivarEstadoPedido, exigirTransicion } from '../domain/estados.js';
  * SUB-PEDIDOS: LECTURA DEL VENDEDOR Y MAQUINA DE ESTADOS
  * =====================================================
  * Reglas de la Etapa 2:
- *   - aceptar: solo el vendedor dueno del local. pendiente -> preparando.
+ *   - aceptar: solo el vendedor dueno del local. por_aceptar -> preparando.
  *   - enviar:  solo el vendedor. preparando -> enviado. Exige evidencia.
  *   - entregar: comprador o vendedor. enviado -> entregado.
  *

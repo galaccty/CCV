@@ -150,7 +150,7 @@ export async function crearPedidoDePrueba({
   comision = 0n,
   costoEnvio = 0n,
   estadoPedido = 'pendiente_pago',
-  estadoSubPedido = 'pendiente',
+  estadoSubPedido = 'por_aceptar',
 } = {}) {
   const comprador = compradorId
     ? { id: compradorId }

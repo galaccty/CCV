@@ -305,7 +305,7 @@ model SubPedido {
   costoEnvio           BigInt                @map("costo_envio")
   comision             BigInt
   total                BigInt
-  estado               EstadoSubPedido       @default(pendiente)
+  estado               EstadoSubPedido       @default(por_aceptar)
   evidenciaEnvio       String?               @map("evidencia_envio") @db.Text
   entregaConfirmadaPor EntregaConfirmadaPor? @map("entrega_confirmada_por")
   fechaEntrega         DateTime?             @map("fecha_entrega") @db.Timestamptz(3)
@@ -505,13 +505,14 @@ enum EstadoPedido {
   completado
   cancelado
   reembolsado
+  reembolso_pendiente
   expirado
 
   @@map("estado_pedido")
 }
 
 enum EstadoSubPedido {
-  pendiente
+  por_aceptar
   preparando
   enviado
   entregado

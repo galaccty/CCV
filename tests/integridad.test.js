@@ -72,7 +72,7 @@ describe('restricciones de integridad 4.13', () => {
               costoEnvio: 0n,
               comision: 0n,
               total: 30000n,
-              estado: 'pendiente',
+              estado: 'por_aceptar',
             },
           });
         }),
@@ -304,7 +304,7 @@ describe('restricciones de integridad 4.13', () => {
             costoEnvio: 0n,
             comision: 0n,
             total: -1n,
-            estado: 'pendiente',
+            estado: 'por_aceptar',
           },
         }),
       /sub_pedido_montos_no_negativos/i,

@@ -14,7 +14,7 @@ import {
 /**
  * MAQUINA DE ESTADOS DEL SUB-PEDIDO - ETAPA 2
  * ===========================================
- * pendiente -> preparando -> enviado -> entregado
+ * por_aceptar -> preparando -> enviado -> entregado
  * La confirma el comprador o el vendedor. Entregar NO libera saldo.
  */
 
@@ -45,14 +45,14 @@ async function montarSubPedido() {
     compradorId: comprador.id,
     cantidad: 3,
     estadoPedido: 'en_proceso',
-    estadoSubPedido: 'pendiente',
+    estadoSubPedido: 'por_aceptar',
   });
 
   return { vendedor, comprador, local, variante, pedido, subPedido };
 }
 
 describe('POST /api/v1/sub-pedidos/{id}/aceptar', () => {
-  test('el vendedor pasa el sub-pedido de pendiente a preparando', CON_BASE, async () => {
+  test('el vendedor pasa el sub-pedido de por_aceptar a preparando', CON_BASE, async () => {
     const { vendedor, subPedido } = await montarSubPedido();
 
     const r = await vendedor.cliente.post(
@@ -73,7 +73,7 @@ describe('POST /api/v1/sub-pedidos/{id}/aceptar', () => {
       where: { subPedidoId: subPedido.id, estadoNuevo: 'preparando' },
       orderBy: { id: 'desc' },
     });
-    assert.equal(historial.estadoAnterior, 'pendiente');
+    assert.equal(historial.estadoAnterior, 'por_aceptar');
     assert.equal(historial.cambiadoPor, vendedor.id);
   });
 
@@ -152,7 +152,7 @@ describe('POST /api/v1/sub-pedidos/{id}/enviar', () => {
     );
   });
 
-  test('no se puede enviar desde pendiente', CON_BASE, async () => {
+  test('no se puede enviar desde por_aceptar', CON_BASE, async () => {
     const { vendedor, subPedido } = await montarSubPedido();
 
     const r = await vendedor.cliente.post(
@@ -243,7 +243,7 @@ describe('POST /api/v1/sub-pedidos/{id}/entregar', () => {
     assert.equal(r.body.error.codigo, 'sin_permiso');
   });
 
-  test('no se puede entregar desde pendiente', CON_BASE, async () => {
+  test('no se puede entregar desde por_aceptar', CON_BASE, async () => {
     const { comprador, subPedido } = await montarSubPedido();
 
     const r = await comprador.cliente.post(
@@ -275,7 +275,7 @@ describe('GET /api/v1/vendedor/sub-pedidos', () => {
     assert.equal(listaDos.body.datos[0].id, dos.subPedido.id);
 
     const filtradaPendiente = await uno.vendedor.cliente.get(
-      '/api/v1/vendedor/sub-pedidos?estado=pendiente',
+      '/api/v1/vendedor/sub-pedidos?estado=por_aceptar',
     );
     assert.equal(filtradaPendiente.body.paginacion.total, 1);
 

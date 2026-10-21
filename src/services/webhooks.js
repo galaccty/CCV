@@ -21,8 +21,11 @@ import * as pagos from './pagos.js';
  *      responden 5xx para que Wompi reintente.
  *   5. La confirmacion del pago tiene DOS transacciones separadas:
  *        A) aprobar + descontar stock + ledger + estado del pedido
- *        B) si A falla por stock, reembolsar y cancelar
- *      La llamada a Wompi ocurre antes de A, jamas dentro.
+ *        B) si A falla por stock, cancelar y registrar el reembolso
+ *      Con el proveedor falso, B completa el reembolso simulado. Con Wompi
+ *      real, B deja el reembolso en `pendiente`, marca el pedido como
+ *      `reembolso_pendiente` y alerta al admin para que devuelva el dinero
+ *      desde el panel. La llamada a Wompi ocurre antes de A, jamas dentro.
  */
 
 const ESTADOS_QUE_RECHAZAN = new Set(['DECLINED', 'VOIDED', 'ERROR']);
@@ -300,7 +303,7 @@ export async function procesarEvento({ cuerpo, checksum }) {
           pedidoId: pago.pedidoId,
           motivo: err.message,
         },
-        'ALERTA: el pago se aprobo en Wompi pero no se pudo confirmar; se reembolsa',
+        'ALERTA: el pago se aprobo en Wompi pero no se pudo confirmar; se registra el reembolso',
       );
 
       try {
@@ -334,39 +337,49 @@ export async function procesarEvento({ cuerpo, checksum }) {
 }
 
 /**
- * Transaccion B: reembolso total automatico cuando la transaccion A fallo.
- * Un reembolso por sub_pedido; la suma completa el monto del pago.
+ * Transaccion B: se ejecuta cuando la transaccion A fallo (stock, local
+ * inactivo o pedido expirado). Un reembolso por sub_pedido.
+ *
+ * - Proveedor falso: simula el reembolso completado, para las pruebas.
+ * - Wompi real: el dinero se devuelve manualmente desde el panel de Wompi. Se
+ *   registra la obligacion en `pendiente`, se deja el pago aprobado con
+ *   `monto_reembolsado = 0` y el pedido en `reembolso_pendiente`. NUNCA se
+ *   marca completado ni se registra el movimiento de reembolso sin que el
+ *   dinero haya salido. El webhook puede responder 200 porque el resultado ya
+ *   quedo guardado y el admin tiene la alerta.
  */
 async function crearReembolsoTotal({ pago, transaccionId, motivo }) {
-  // La Etapa 2 solo ejecuta reembolsos con el proveedor falso. El endpoint
-  // real de reembolsos de Wompi no esta verificado en la documentacion
-  // oficial. En modo real se prefiere fallar y alertar antes que marcar un
-  // reembolso como completado sin haber devuelto el dinero.
-  if (!pagos.esProveedorFalso()) {
-    throw new Error(
-      'El reembolso automatico real no esta implementado: falta verificar el ' +
-        'endpoint de reembolsos de Wompi. El evento queda sin procesar y se alerta.',
-    );
-  }
+  const esManual = pagos.reembolsosSonManuales();
 
-  return withTransaccion(async (tx) => {
+  const resultado = await withTransaccion(async (tx) => {
     const pagoActual = await tx.pago.findUnique({ where: { id: pago.id } });
 
     if (!pagoActual) {
       throw new ErrorApi('pago_no_encontrado', 'El pago no existe.', 404);
     }
 
-    // Reclamo atomico: solo una transaccion puede pasar el pago de `pendiente`
-    // a `reembolsado`. Si otra peticion alcanzo a aprobarlo, o si ya estaba
-    // reembolsado, esta transaccion no toca nada. Asi dos webhooks simultaneos
-    // no pueden aprobar Y reembolsar el mismo pago a la vez.
+    if (!pagoActual.pedidoId) {
+      throw new ErrorApi(
+        'pago_sin_pedido',
+        'El pago aprobado no tiene un pedido asociado.',
+        409,
+      );
+    }
+
+    // Reclamo atomico: solo una transaccion puede tomar el pago `pendiente`.
+    // En modo manual queda `aprobado` (el dinero si entro); en modo falso se
+    // simula que ya salio y queda `reembolsado`. Si otra peticion gano la
+    // carrera, esta no toca nada y el webhook repetido no duplica efectos.
     const reclamo = await tx.pago.updateMany({
       where: { id: pago.id, estado: 'pendiente' },
-      data: { estado: 'reembolsado', idTransaccionWompi: transaccionId },
+      data: {
+        estado: esManual ? 'aprobado' : 'reembolsado',
+        idTransaccionWompi: transaccionId,
+      },
     });
 
     if (reclamo.count === 0) {
-      return { reembolsado: false };
+      return { reembolsado: false, manual: esManual, reembolsoIds: [] };
     }
 
     const subPedidos = await tx.subPedido.findMany({
@@ -382,8 +395,14 @@ async function crearReembolsoTotal({ pago, transaccionId, motivo }) {
       where: { pagoId: pago.id },
     });
 
+    const reembolsoIds = [];
+
     for (const sub of subPedidos) {
-      if (existentes.some((r) => r.subPedidoId === sub.id)) continue;
+      const yaExiste = existentes.find((r) => r.subPedidoId === sub.id);
+      if (yaExiste) {
+        reembolsoIds.push(yaExiste.id);
+        continue;
+      }
 
       const reembolso = await tx.reembolso.create({
         data: {
@@ -391,30 +410,66 @@ async function crearReembolsoTotal({ pago, transaccionId, motivo }) {
           subPedidoId: sub.id,
           tipo: 'digital',
           monto: sub.total,
-          estado: 'completado',
+          estado: esManual ? 'pendiente' : 'completado',
           motivo,
         },
       });
+      reembolsoIds.push(reembolso.id);
 
-      await registrarMovimiento({
-        tipo: 'reembolso',
-        monto: sub.total,
-        pagoId: pago.id,
-        reembolsoId: reembolso.id,
+      // En modo real el dinero todavia no salio: no se escribe el movimiento
+      // de reembolso. Se escribira cuando el admin confirme la devolucion.
+      if (!esManual) {
+        await registrarMovimiento({
+          tipo: 'reembolso',
+          monto: sub.total,
+          pagoId: pago.id,
+          reembolsoId: reembolso.id,
+        });
+      }
+
+      const estadoSubPedido = esManual ? 'cancelado' : 'reembolsado';
+      if (sub.estado !== estadoSubPedido) {
+        await tx.historialEstadoSubPedido.create({
+          data: {
+            subPedidoId: sub.id,
+            estadoAnterior: sub.estado,
+            estadoNuevo: estadoSubPedido,
+          },
+        });
+
+        await tx.subPedido.update({
+          where: { id: sub.id },
+          data: { estado: estadoSubPedido },
+        });
+      }
+    }
+
+    if (esManual) {
+      // El pago si se recibio: se registra una sola vez, aunque el webhook se
+      // repita. El reembolso queda pendiente y no toca `monto_reembolsado`.
+      const yaRegistrado = await tx.ledger.findFirst({
+        where: { pagoId: pago.id, tipo: 'pago_recibido' },
+      });
+      if (!yaRegistrado) {
+        await registrarMovimiento({
+          tipo: 'pago_recibido',
+          monto: pagoActual.monto,
+          pagoId: pago.id,
+        });
+      }
+
+      // `expirado` deja de representar la realidad si el pago si se aprobo:
+      // el pedido queda visible como reembolso en curso.
+      await tx.pedido.update({
+        where: { id: pagoActual.pedidoId },
+        data: { estado: 'reembolso_pendiente' },
       });
 
-      await tx.historialEstadoSubPedido.create({
-        data: {
-          subPedidoId: sub.id,
-          estadoAnterior: sub.estado,
-          estadoNuevo: 'reembolsado',
-        },
-      });
-
-      await tx.subPedido.update({
-        where: { id: sub.id },
-        data: { estado: 'reembolsado' },
-      });
+      return {
+        reembolsado: reembolsoIds.length > 0,
+        manual: true,
+        reembolsoIds,
+      };
     }
 
     const suma = await tx.reembolso.aggregate({
@@ -448,6 +503,21 @@ async function crearReembolsoTotal({ pago, transaccionId, motivo }) {
       });
     }
 
-    return { reembolsado: true };
+    return { reembolsado: true, manual: false, reembolsoIds };
   });
+
+  if (resultado.manual && resultado.reembolsado) {
+    logger.error(
+      {
+        alerta: 'reembolso_pendiente_manual',
+        pagoId: pago.id,
+        pedidoId: pago.pedidoId,
+        reembolsoIds: resultado.reembolsoIds,
+        motivo,
+      },
+      'ALERTA: reembolso pendiente; devolverlo manualmente desde el panel de Wompi',
+    );
+  }
+
+  return resultado;
 }

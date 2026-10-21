@@ -9,7 +9,7 @@ import {
 /**
  * SUB-PEDIDOS - Etapa 2
  * =====================
- * POST /api/v1/sub-pedidos/{id}/aceptar   vendedor: pendiente -> preparando
+ * POST /api/v1/sub-pedidos/{id}/aceptar   vendedor: por_aceptar -> preparando
  * POST /api/v1/sub-pedidos/{id}/enviar    vendedor: preparando -> enviado
  * POST /api/v1/sub-pedidos/{id}/entregar  comprador o vendedor: enviado -> entregado
  */

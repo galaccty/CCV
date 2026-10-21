@@ -322,7 +322,7 @@ export async function crearPedido({ usuario, datos, idempotenciaId }) {
         costoEnvio: preparado.costoEnvio,
         comision: preparado.comision,
         total: preparado.total,
-        estado: 'pendiente',
+        estado: 'por_aceptar',
       },
     });
 
@@ -346,7 +346,7 @@ export async function crearPedido({ usuario, datos, idempotenciaId }) {
       data: {
         subPedidoId: subPedido.id,
         estadoAnterior: null,
-        estadoNuevo: 'pendiente',
+        estadoNuevo: 'por_aceptar',
         cambiadoPor: usuario.id,
       },
     });

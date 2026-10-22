@@ -14,6 +14,7 @@ import {
 } from '../../src/services/subPedidos.js';
 import { withTransaccion } from '../../src/lib/transaccion.js';
 import { registrarMovimiento } from '../../src/services/ledger.js';
+import { cancelarEfectivoSinAceptar } from '../../src/jobs/cancelarEfectivoSinAceptar.js';
 
 /**
  * PEDIDOS EN EFECTIVO - ETAPA 4b
@@ -362,6 +363,61 @@ describe('entrega de un pedido en efectivo', () => {
       where: { pedidoId: subPedido.pedidoId, estado: 'aprobado' },
     });
     assert.equal(pagos.length, 1);
+  });
+});
+
+describe('job de cancelacion de efectivo sin aceptar', () => {
+  test('cancela el sub-pedido vencido sin tocar stock', CON_BASE, async () => {
+    const { subPedido, pedido, variante } = await pedidoEfectivo();
+    const haceMasDeDosDias = new Date(Date.now() - 49 * 60 * 60 * 1000);
+
+    await prisma.subPedido.update({
+      where: { id: subPedido.id },
+      data: { creadoEn: haceMasDeDosDias },
+    });
+
+    const resultado = await cancelarEfectivoSinAceptar();
+    assert.ok(resultado.revisados >= 1);
+    assert.ok(resultado.cancelados >= 1);
+
+    const subDespues = await prisma.subPedido.findUnique({
+      where: { id: subPedido.id },
+    });
+    const pedidoDespues = await prisma.pedido.findUnique({
+      where: { id: pedido.id },
+      include: { pagos: true },
+    });
+    const varianteDespues = await prisma.productoVariante.findUnique({
+      where: { id: variante.id },
+    });
+
+    assert.equal(subDespues.estado, 'cancelado');
+    assert.equal(pedidoDespues.estado, 'cancelado');
+    assert.equal(pedidoDespues.pagos[0].estado, 'rechazado');
+    assert.equal(varianteDespues.stock, 10);
+
+    const historial = await prisma.historialEstadoSubPedido.findFirst({
+      where: {
+        subPedidoId: subPedido.id,
+        estadoNuevo: 'cancelado',
+      },
+    });
+    assert.ok(historial);
+    assert.equal(historial.cambiadoPor, null);
+
+    const segunda = await cancelarEfectivoSinAceptar();
+    assert.equal(segunda.cancelados, 0);
+  });
+
+  test('no cancela un pedido que todavia esta dentro del plazo', CON_BASE, async () => {
+    const { subPedido } = await pedidoEfectivo();
+
+    await cancelarEfectivoSinAceptar();
+
+    const subDespues = await prisma.subPedido.findUnique({
+      where: { id: subPedido.id },
+    });
+    assert.equal(subDespues.estado, 'por_aceptar');
   });
 });
 

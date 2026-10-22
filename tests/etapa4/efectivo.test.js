@@ -7,6 +7,8 @@ import {
   crearUsuarioConSesion,
 } from '../helpers/http.js';
 import { crearCatalogoParaVendedor, crearUsuarioDirecto } from '../helpers/datos.js';
+import { ajustarStock } from '../../src/services/stock.js';
+import { aceptarSubPedido } from '../../src/services/subPedidos.js';
 
 /**
  * PEDIDOS EN EFECTIVO - ETAPA 4b
@@ -148,6 +150,81 @@ describe('checkout en efectivo', () => {
 
     assert.equal(r.status, 422, JSON.stringify(r.body));
     assert.equal(r.body.error.codigo, 'efectivo_un_solo_local');
+  });
+});
+
+describe('aceptacion de un pedido en efectivo', () => {
+  test('descuenta el stock y deja el sub-pedido en preparando', CON_BASE, async () => {
+    const { vendedor, subPedido, variante } = await pedidoEfectivo();
+
+    const r = await vendedor.cliente.post(
+      `/api/v1/sub-pedidos/${subPedido.id}/aceptar`,
+    );
+
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.estado, 'preparando');
+
+    const varianteDespues = await prisma.productoVariante.findUnique({
+      where: { id: variante.id },
+    });
+    assert.equal(varianteDespues.stock, 7);
+  });
+
+  test('dos aceptaciones simultaneas descuentan stock una sola vez', CON_BASE, async () => {
+    const { vendedor, subPedido, variante } = await pedidoEfectivo();
+    const actor = { id: vendedor.id, roles: ['vendedor'] };
+
+    const resultados = await Promise.allSettled([
+      aceptarSubPedido({ usuario: actor, id: subPedido.id }),
+      aceptarSubPedido({ usuario: actor, id: subPedido.id }),
+    ]);
+
+    const exitosas = resultados.filter((r) => r.status === 'fulfilled');
+    const fallidas = resultados.filter((r) => r.status === 'rejected');
+
+    assert.equal(exitosas.length, 1);
+    assert.equal(fallidas.length, 1);
+    assert.equal(fallidas[0].reason.codigo, 'transicion_invalida');
+
+    const varianteDespues = await prisma.productoVariante.findUnique({
+      where: { id: variante.id },
+    });
+    assert.equal(varianteDespues.stock, 7);
+
+    const subDespues = await prisma.subPedido.findUnique({
+      where: { id: subPedido.id },
+    });
+    assert.equal(subDespues.estado, 'preparando');
+  });
+
+  test('si no hay stock cancela el pedido, rechaza el pago y no descuenta', CON_BASE, async () => {
+    const { vendedor, subPedido, pedido, variante } = await pedidoEfectivo();
+    await ajustarStock(prisma, variante.id, -8);
+
+    const r = await vendedor.cliente.post(
+      `/api/v1/sub-pedidos/${subPedido.id}/aceptar`,
+    );
+
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.error.codigo, 'stock_insuficiente');
+
+    const varianteDespues = await prisma.productoVariante.findUnique({
+      where: { id: variante.id },
+    });
+    assert.equal(varianteDespues.stock, 2);
+
+    const subDespues = await prisma.subPedido.findUnique({
+      where: { id: subPedido.id },
+    });
+    const pedidoDespues = await prisma.pedido.findUnique({
+      where: { id: pedido.id },
+      include: { pagos: true },
+    });
+
+    assert.equal(subDespues.estado, 'cancelado');
+    assert.equal(pedidoDespues.estado, 'cancelado');
+    assert.equal(pedidoDespues.pagos.length, 1);
+    assert.equal(pedidoDespues.pagos[0].estado, 'rechazado');
   });
 });
 

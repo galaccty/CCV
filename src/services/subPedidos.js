@@ -7,6 +7,7 @@ import {
   errorSinPermiso,
 } from '../lib/errores.js';
 import { derivarEstadoPedido, exigirTransicion } from '../domain/estados.js';
+import { descontarStock, ErrorStockInsuficiente } from './stock.js';
 
 /**
  * SUB-PEDIDOS: LECTURA DEL VENDEDOR Y MAQUINA DE ESTADOS
@@ -64,6 +65,23 @@ function esCompradorDelPedido(sub, usuario) {
   return sub.pedido.usuarioId === usuario.id;
 }
 
+function esPedidoEnEfectivo(sub) {
+  return sub.pedido.metodoPago === 'efectivo';
+}
+
+function validarPermiso(sub, usuario, soloVendedor) {
+  const vendedor = esVendedorDelLocal(sub, usuario);
+  const comprador = esCompradorDelPedido(sub, usuario);
+  const admin = esAdmin(usuario);
+
+  if (soloVendedor) {
+    if (!vendedor && !admin) throw errorSinPermiso();
+    return;
+  }
+
+  if (!vendedor && !comprador && !admin) throw errorSinPermiso();
+}
+
 async function cargarSubPedido(id) {
   const sub = await prisma.subPedido.findUnique({
     where: { id },
@@ -119,16 +137,7 @@ async function cambiarEstado({
 }) {
   const sub = await cargarSubPedido(id);
 
-  const vendedor = esVendedorDelLocal(sub, usuario);
-  const comprador = esCompradorDelPedido(sub, usuario);
-  const admin = esAdmin(usuario);
-
-  if (soloVendedor) {
-    if (!vendedor && !admin) throw errorSinPermiso();
-  } else if (!vendedor && !comprador && !admin) {
-    throw errorSinPermiso();
-  }
-
+  validarPermiso(sub, usuario, soloVendedor);
   exigirTransicion(sub.estado, hacia);
 
   return withTransaccion(async (tx) => {
@@ -189,7 +198,106 @@ async function cambiarEstado({
   });
 }
 
-export function aceptarSubPedido({ usuario, id }) {
+async function cancelarEfectivoPorFaltaDeStock(sub) {
+  return withTransaccion(async (tx) => {
+    const cambiados = await tx.subPedido.updateMany({
+      where: { id: sub.id, estado: 'por_aceptar' },
+      data: { estado: 'cancelado' },
+    });
+
+    // Otra peticion ya tomo la aceptacion. No se pisa su resultado.
+    if (cambiados.count === 0) return false;
+
+    await tx.historialEstadoSubPedido.create({
+      data: {
+        subPedidoId: sub.id,
+        estadoAnterior: 'por_aceptar',
+        estadoNuevo: 'cancelado',
+        cambiadoPor: null,
+      },
+    });
+
+    await tx.pedido.update({
+      where: { id: sub.pedidoId },
+      data: { estado: 'cancelado' },
+    });
+
+    await tx.pago.updateMany({
+      where: { pedidoId: sub.pedidoId, estado: 'pendiente' },
+      data: { estado: 'rechazado' },
+    });
+
+    return true;
+  });
+}
+
+async function aceptarEfectivo({ sub, usuario }) {
+  try {
+    return await withTransaccion(async (tx) => {
+      // Se reclama la transicion ANTES de tocar stock. Dos aceptaciones
+      // simultaneas compiten por esta misma fila y solo una descuenta.
+      const cambiados = await tx.subPedido.updateMany({
+        where: { id: sub.id, estado: 'por_aceptar' },
+        data: { estado: 'preparando' },
+      });
+
+      if (cambiados.count === 0) {
+        throw new ErrorApi(
+          'transicion_invalida',
+          'El sub-pedido cambio de estado mientras se procesaba la solicitud.',
+          409,
+        );
+      }
+
+      for (const detalle of sub.detalles) {
+        await descontarStock(tx, detalle.varianteId, detalle.cantidad);
+      }
+
+      await tx.historialEstadoSubPedido.create({
+        data: {
+          subPedidoId: sub.id,
+          estadoAnterior: 'por_aceptar',
+          estadoNuevo: 'preparando',
+          cambiadoPor: usuario.id,
+        },
+      });
+
+      const actualizado = await tx.subPedido.findUnique({
+        where: { id: sub.id },
+        include: INCLUIR_DETALLES,
+      });
+
+      return convertirBigIntAJson(serializarSubPedido(actualizado));
+    });
+  } catch (err) {
+    if (err instanceof ErrorStockInsuficiente) {
+      // La transaccion de aceptacion ya se revirtio, incluido el estado.
+      // En otra transaccion se cancela el pedido y se rechaza el pago.
+      await cancelarEfectivoPorFaltaDeStock(sub);
+
+      throw new ErrorApi(
+        'stock_insuficiente',
+        `No hay stock suficiente para la variante ${err.varianteId}. ` +
+          'El pedido en efectivo fue cancelado y el pago rechazado.',
+        409,
+        { variante_id: err.varianteId, cantidad: err.cantidad },
+      );
+    }
+
+    throw err;
+  }
+}
+
+export async function aceptarSubPedido({ usuario, id }) {
+  const sub = await cargarSubPedido(id);
+
+  validarPermiso(sub, usuario, true);
+  exigirTransicion(sub.estado, 'preparando');
+
+  if (esPedidoEnEfectivo(sub)) {
+    return aceptarEfectivo({ sub, usuario });
+  }
+
   return cambiarEstado({
     usuario,
     id,

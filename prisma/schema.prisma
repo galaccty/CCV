@@ -30,6 +30,10 @@ model Usuario {
   telefono        String?  @db.VarChar(30)
   emailVerificado Boolean  @default(false) @map("email_verificado")
   passwordHash    String   @map("password_hash") @db.VarChar(255)
+  // Version de la cookie de sesion. Cambiar la contrasena la incrementa para
+  // invalidar todas las sesiones anteriores; la sesion actual recibe una
+  // cookie nueva con la version nueva.
+  versionSesion   Int      @default(0) @map("version_sesion")
   aceptoTerminos  Boolean  @map("acepto_terminos")
   fechaAceptacion DateTime @map("fecha_aceptacion") @db.Timestamptz(3)
   activo          Boolean  @default(true)

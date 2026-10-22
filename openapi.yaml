@@ -240,7 +240,9 @@ paths:
     post:
       tags: [Autenticación]
       summary: Restablecer la contraseña con el token del enlace
-      description: El token sirve una sola vez y vence a las 2 horas.
+      description: |
+        El token sirve una sola vez y vence a las 2 horas. Al restablecer se
+        cierran todas las sesiones abiertas del usuario.
       operationId: restablecerContrasena
       security: []
       parameters:
@@ -303,7 +305,9 @@ paths:
       summary: Cambiar la contraseña conociendo la actual
       description: |
         Exige la contraseña actual. Inutiliza los enlaces de restablecimiento
-        pendientes. La sesión abierta sigue siendo válida hasta que expira.
+        pendientes. Cierra todas las demás sesiones del usuario: la sesión que
+        hace el cambio recibe una cookie nueva y las anteriores dejan de ser
+        válidas.
       operationId: cambiarContrasena
       security:
         - cookieSesion: []

@@ -378,6 +378,28 @@ describe('restablecimiento de contrasena', () => {
     assert.equal(loginViejo.status, 401, 'la contrasena vieja debe dejar de servir');
   });
 
+  test('restablecer la contraseña cierra las sesiones abiertas', CON_BASE, async () => {
+    limpiarCorreos();
+    const usuario = await crearUsuarioConSesion();
+
+    const abierta = await usuario.cliente.get('/api/v1/auth/yo');
+    assert.equal(abierta.status, 200);
+
+    await cliente().post('/api/v1/auth/solicitar-restablecimiento', {
+      email: usuario.email,
+    });
+    const token = tokenDeCorreo(ultimoCorreo('Restablece tu contrasena'));
+
+    const cambio = await cliente().post('/api/v1/auth/restablecer-contrasena', {
+      token,
+      contrasena: 'NuevaContrasena456',
+    });
+    assert.equal(cambio.status, 200, JSON.stringify(cambio.body));
+
+    const cerrada = await usuario.cliente.get('/api/v1/auth/yo');
+    assert.equal(cerrada.status, 401, 'la sesión anterior deja de servir');
+  });
+
   test('responde igual exista o no la cuenta', CON_BASE, async () => {
     const r1 = await cliente().post('/api/v1/auth/solicitar-restablecimiento', {
       email: correoUnico('noexiste'),
@@ -505,6 +527,36 @@ describe('cuenta del comprador', () => {
       contrasena: nueva,
     });
     assert.equal(loginNuevo.status, 200, 'la contraseña nueva sí sirve');
+  });
+
+  test('cerrar las demás sesiones al cambiar la contraseña', CON_BASE, async () => {
+    const usuario = await crearUsuarioConSesion();
+
+    const otraSesion = cliente();
+    const login = await otraSesion.post('/api/v1/auth/login', {
+      email: usuario.email,
+      contrasena: usuario.contrasena,
+    });
+    assert.equal(login.status, 200);
+
+    const antes = await otraSesion.get('/api/v1/auth/yo');
+    assert.equal(antes.status, 200, 'la segunda sesión sirve antes del cambio');
+
+    const cambio = await usuario.cliente.post('/api/v1/auth/cambiar-contrasena', {
+      contrasena_actual: usuario.contrasena,
+      contrasena_nueva: 'NuevaContrasena456',
+    });
+    assert.equal(cambio.status, 200, JSON.stringify(cambio.body));
+
+    const actual = await usuario.cliente.get('/api/v1/auth/yo');
+    assert.equal(actual.status, 200, 'la sesión que cambió la contraseña sigue abierta');
+
+    const cerrada = await otraSesion.get('/api/v1/auth/yo');
+    assert.equal(cerrada.status, 401, 'las demás sesiones quedan cerradas');
+    assert.equal(cerrada.body.error.codigo, 'no_autenticado');
+
+    const fila = await prisma.usuario.findUnique({ where: { id: usuario.id } });
+    assert.equal(fila.versionSesion, 1, 'la versión de sesión se incrementó');
   });
 
   test('no cambia la contraseña si la actual no coincide', CON_BASE, async () => {

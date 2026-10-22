@@ -27,7 +27,7 @@ const ROLES_VALIDOS = ['comprador', 'vendedor', 'admin'];
 // Cookie de sesion
 // ---------------------------------------------------------------------------
 // Decision de diseno: la cookie es un valor firmado (HMAC) que lleva el id
-// del usuario y su expiracion. NO hay tabla de sesiones.
+// del usuario, la version de sesion y su expiracion. NO hay tabla de sesiones.
 //
 // Por que: la Etapa 1 define cinco tablas y "sesion" no es una de ellas.
 // Asi el rol y el estado `activo` se leen SIEMPRE de la base en cada
@@ -35,10 +35,13 @@ const ROLES_VALIDOS = ['comprador', 'vendedor', 'admin'];
 // version de token que se invalide al cambiar el rol"): degradar o desactivar
 // un usuario surte efecto de inmediato, sin esperar a que expire nada.
 //
-// Limitacion a tener en cuenta: cerrar sesion borra la cookie del navegador,
-// pero el token sigue siendo valido hasta que expira. Si necesitas revocar
-// un token robado de inmediato, hay que agregar una tabla `sesion` (es una
-// migracion nueva, no se toca ninguna aplicada).
+// Cambiar o restablecer la contrasena incrementa `usuario.version_sesion`.
+// Todos los tokens emitidos con la version anterior dejan de servir. La
+// sesion que cambia la contrasena recibe una cookie nueva con la version
+// nueva; el resto de sesiones del usuario quedan cerradas de inmediato.
+//
+// Cerrar sesion (logout) sigue borrando solo la cookie del navegador: el
+// token no se revoca hasta que expira o hasta que cambia la version.
 // ---------------------------------------------------------------------------
 
 const PREFIJO_TOKEN = 'v1';
@@ -248,10 +251,11 @@ export async function registrarUsuario({
 // Inicio y fin de sesion
 // ---------------------------------------------------------------------------
 
-export function crearTokenSesion(usuarioId) {
+export function crearTokenSesion(usuarioId, versionSesion = 0) {
   const ahora = Date.now();
   return firmar({
     u: usuarioId,
+    v: versionSesion,
     iat: ahora,
     exp: ahora + config.sessionMaxAgeMs,
   });
@@ -280,7 +284,7 @@ export async function iniciarSesion({ email, contrasena }) {
   }
 
   return {
-    token: crearTokenSesion(usuario.id),
+    token: crearTokenSesion(usuario.id, usuario.versionSesion),
     usuario: serializarUsuario(usuario),
   };
 }
@@ -295,6 +299,10 @@ export async function usuarioDesdeToken(token) {
     include: { roles: true },
   });
   if (!usuario || !usuario.activo) return null;
+
+  // Tokens emitidos antes de existir la version no traen `v`: equivalen a 0.
+  // Cualquier cambio de contrasena posterior los invalida.
+  if ((datos.v ?? 0) !== usuario.versionSesion) return null;
 
   return {
     id: usuario.id,
@@ -376,17 +384,22 @@ export async function restablecerContrasena({ token, contrasena }) {
   }
 
   const fila = await consumirToken(token, 'reset_password');
+  const passwordHash = await hashearContrasena(contrasena);
 
-  await prisma.$transaction([
-    prisma.tokenVerificacion.update({
+  await prisma.$transaction(async (tx) => {
+    await tx.tokenVerificacion.update({
       where: { id: fila.id },
       data: { usado: true },
-    }),
-    prisma.usuario.update({
+    });
+    await tx.usuario.update({
       where: { id: fila.usuarioId },
-      data: { passwordHash: await hashearContrasena(contrasena) },
-    }),
-  ]);
+      data: {
+        passwordHash,
+        // Quien restablece no tiene sesion: se cierran todas las anteriores.
+        versionSesion: { increment: 1 },
+      },
+    });
+  });
 
   logger.info({ usuarioId: fila.usuarioId }, 'contrasena restablecida');
   return { restablecida: true };
@@ -443,21 +456,33 @@ export async function cambiarContrasena({
 
   const passwordHash = await hashearContrasena(contrasenaNueva);
 
-  await prisma.$transaction([
-    prisma.usuario.update({
+  const actualizado = await prisma.$transaction(async (tx) => {
+    const usuarioActualizado = await tx.usuario.update({
       where: { id: usuarioId },
-      data: { passwordHash },
-    }),
+      data: {
+        passwordHash,
+        // Invalida todas las cookies emitidas hasta ahora. La ruta emite una
+        // nueva para que la sesion que hizo el cambio siga conectada.
+        versionSesion: { increment: 1 },
+      },
+      select: { versionSesion: true },
+    });
+
     // Un enlace de restablecimiento pendiente deja de servir: el usuario ya
     // demostro que conoce la contrasena actual.
-    prisma.tokenVerificacion.updateMany({
+    await tx.tokenVerificacion.updateMany({
       where: { usuarioId, tipo: 'reset_password', usado: false },
       data: { usado: true },
-    }),
-  ]);
+    });
+
+    return usuarioActualizado;
+  });
 
   logger.info({ usuarioId }, 'contrasena cambiada');
-  return { actualizada: true };
+  return {
+    actualizada: true,
+    token: crearTokenSesion(usuarioId, actualizado.versionSesion),
+  };
 }
 
 export async function reenviarVerificacion({ email }) {

@@ -349,6 +349,10 @@ por las cookies `SameSite=Lax`, por ejemplo `app.tudominio.com` y
 cookie de sesión; en ese caso habría que cambiar a `SameSite=None; Secure` en
 una etapa posterior, además de ajustar `SESSION_COOKIE_SECURE`.
 
+Antes de desplegar, revisá [`docs/despliegue.md`](./docs/despliegue.md). En
+particular, `trust proxy` debe coincidir con la topología real para que los
+límites por IP usen la IP del visitante y no la del proxy.
+
 ---
 
 ## 6. Cómo está armado
@@ -383,11 +387,12 @@ backend/
 Las decisiones que importan:
 
 - **La cookie de sesión no usa tabla.** Es un valor firmado con HMAC que lleva
-  el id del usuario y su vencimiento. El rol y el estado `activo` se leen
-  **siempre** de la base, por eso desactivar un usuario o cambiarle el rol
-  surte efecto de inmediato. La contrapartida es que cerrar sesión borra la
-  cookie pero no invalida el token hasta que expira. Si más adelante querés
-  revocación inmediata, se agrega una tabla `sesion` en una migración nueva.
+  el id del usuario, la versión de sesión y su vencimiento. El rol y el estado
+  `activo` se leen **siempre** de la base, por eso desactivar un usuario o
+  cambiarle el rol surte efecto de inmediato. Cambiar o restablecer la
+  contraseña incrementa `usuario.version_sesion`: todas las sesiones anteriores
+  dejan de servir y, en el cambio de contraseña, la sesión actual recibe una
+  cookie nueva. Cerrar sesión (logout) solo borra la cookie del navegador.
 - **El proveedor de correo es intercambiable** detrás de una interfaz.
 - **Los guardianes de CI protegen el ledger, el stock y Wompi**, además de las
   pruebas de invariantes. Se ejecutan antes de la suite completa y bloquean el

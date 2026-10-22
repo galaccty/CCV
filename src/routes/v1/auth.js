@@ -147,11 +147,15 @@ router.post(
   limiteIntentos,
   async (req, res) => {
     const datos = esquemaCambiarContrasena.parse(req.body);
-    const resultado = await auth.cambiarContrasena({
+    const { token, ...resultado } = await auth.cambiarContrasena({
       usuarioId: req.usuario.id,
       contrasenaActual: datos.contrasena_actual,
       contrasenaNueva: datos.contrasena_nueva,
     });
+
+    // La cookie anterior quedo invalidada por el incremento de version. Se
+    // emite una nueva para que esta sesion siga conectada; las demas no.
+    ponerCookieSesion(res, token);
 
     res.json({ mensaje: 'Contrasena cambiada.', ...resultado });
   },

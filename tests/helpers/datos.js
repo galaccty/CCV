@@ -223,6 +223,109 @@ export async function crearPedidoDePrueba({
   });
 }
 
+/**
+ * Crea un pedido con varias lineas desde el inicio. Los snapshots de
+ * `sub_pedido` y `pedido` son inmutables, asi que no se puede agregar una
+ * segunda linea despues de crear el pedido.
+ */
+export async function crearPedidoConLineas({
+  local,
+  lineas,
+  compradorId,
+  comision = 0n,
+  costoEnvio = 0n,
+  metodoPago = 'tarjeta',
+  estadoPedido = 'pendiente_pago',
+  estadoSubPedido = 'por_aceptar',
+  configSnapshot = null,
+} = {}) {
+  if (!Array.isArray(lineas) || lineas.length === 0) {
+    throw new Error('El pedido necesita al menos una linea.');
+  }
+
+  const comprador = compradorId
+    ? { id: compradorId }
+    : await crearUsuarioDirecto({ nombre: 'Comprador', roles: ['comprador'] });
+
+  const normalizadas = lineas.map((linea) => {
+    if (!linea?.variante?.id) {
+      throw new Error('Cada linea necesita una variante.');
+    }
+    if (!Number.isInteger(linea.cantidad) || linea.cantidad <= 0) {
+      throw new Error(`Cantidad invalida: ${linea.cantidad}`);
+    }
+    const precio = aBigInt(
+      linea.precioUnitario ?? linea.variante.precio,
+      'precioUnitario',
+    );
+    return {
+      ...linea,
+      precio,
+      monto: multiplicar(precio, BigInt(linea.cantidad)),
+    };
+  });
+
+  const subtotal = normalizadas.reduce((total, linea) => total + linea.monto, 0n);
+  const envio = aBigInt(costoEnvio, 'costoEnvio');
+  const comisionBig = aBigInt(comision, 'comision');
+  const total = sumar(subtotal, envio);
+  const snapshot = configSnapshot ?? {
+    porcentaje_comision: 5,
+    comision_minima: 2000,
+    pedido_minimo: 30000,
+    tarifa_base_envio: 2000,
+    tarifa_por_km: 800,
+    dias_retencion: 5,
+    tomado_en: new Date().toISOString(),
+  };
+
+  return prisma.$transaction(async (tx) => {
+    const pedido = await tx.pedido.create({
+      data: {
+        usuarioId: comprador.id,
+        direccionTexto: 'Calle 1 # 2-3, Bogota',
+        direccionLatitud: 4.65,
+        direccionLongitud: -74.05,
+        total,
+        metodoPago,
+        estado: estadoPedido,
+        configSnapshot: snapshot,
+      },
+    });
+
+    const subPedido = await tx.subPedido.create({
+      data: {
+        pedidoId: pedido.id,
+        localId: local.id,
+        nombreLocal: local.nombre,
+        subtotalProductos: subtotal,
+        costoEnvio: envio,
+        comision: comisionBig,
+        total,
+        estado: estadoSubPedido,
+      },
+    });
+
+    const detalles = [];
+    for (const linea of normalizadas) {
+      detalles.push(
+        await tx.detalleProducto.create({
+          data: {
+            subPedidoId: subPedido.id,
+            varianteId: linea.variante.id,
+            nombreProducto: `Producto congelado ${linea.variante.id}`,
+            atributosElegidos: { talla: 'M', linea: detalles.length + 1 },
+            cantidad: linea.cantidad,
+            precioUnitario: linea.precio,
+          },
+        }),
+      );
+    }
+
+    return { comprador, pedido, subPedido, detalles };
+  });
+}
+
 export async function crearPagoDePrueba({
   pedido,
   monto = pedido.total,
@@ -248,15 +351,53 @@ export async function crearReembolsoDePrueba({
   estado = 'pendiente',
   tipo = 'digital',
 } = {}) {
-  return prisma.reembolso.create({
-    data: {
-      pagoId: pago.id,
-      subPedidoId: subPedido.id,
-      tipo,
-      monto: aBigInt(monto, 'monto'),
-      estado,
-      motivo: 'prueba',
-    },
+  const montoBig = aBigInt(monto, 'monto');
+
+  return prisma.$transaction(async (tx) => {
+    const reembolso = await tx.reembolso.create({
+      data: {
+        pagoId: pago.id,
+        subPedidoId: subPedido.id,
+        tipo,
+        monto: montoBig,
+        estado,
+        motivo: 'prueba',
+        completadoEn: estado === 'completado' ? new Date() : null,
+      },
+    });
+
+    // Los triggers diferidos exigen que las lineas expliquen el monto. Las
+    // pruebas usan montos arbitrarios, asi que se asigna la cantidad minima
+    // que cabria en el precio congelado sin pasar la cantidad original.
+    const detalle = await tx.detalleProducto.findFirst({
+      where: { subPedidoId: subPedido.id },
+      orderBy: { id: 'asc' },
+    });
+
+    if (detalle) {
+      const cantidadNecesaria =
+        detalle.precioUnitario > 0n
+          ? Number(
+              (montoBig + detalle.precioUnitario - 1n) /
+                detalle.precioUnitario,
+            )
+          : 1;
+      const cantidad = Math.min(
+        detalle.cantidad,
+        Math.max(1, cantidadNecesaria),
+      );
+
+      await tx.reembolsoLinea.create({
+        data: {
+          reembolsoId: reembolso.id,
+          detalleId: detalle.id,
+          cantidad,
+          monto: montoBig,
+        },
+      });
+    }
+
+    return reembolso;
   });
 }
 

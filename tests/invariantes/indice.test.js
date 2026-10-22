@@ -27,7 +27,7 @@ const ESPERADOS = [
   [6, 'parcial', 'reembolso pendiente bloquea; job y disputas Etapa 4'],
   [7, 'activo', 'modulo unico de stock y descuento atomico probado en concurrencia'],
   [8, 'pendiente', 'Etapa 4 - liquidaciones'],
-  [9, 'pendiente', 'Etapa 4 - maquina de estados del local'],
+  [9, 'activo', 'trigger y recalcular_estado_local cubren la maquina de estados del local'],
   [10, 'activo', 'Idempotency-Key obligatoria en los POST de pedido y pago'],
   [11, 'parcial', 'pedidos, pagos, reembolsos, sub_pedidos, detalles, ledger y cuenta_local protegidos; faltan productos y retencion'],
   [12, 'activo', 'el checkout calcula precios, comision, envio y total en el backend'],

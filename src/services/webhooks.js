@@ -420,10 +420,25 @@ async function crearReembolsoTotal({ pago, transaccionId, motivo }) {
           subPedidoId: sub.id,
           tipo: 'digital',
           monto: sub.total,
+          montoEnvio: sub.costoEnvio,
+          incluyeEnvio: sub.costoEnvio > 0n,
           estado: esManual ? 'pendiente' : 'completado',
           motivo,
+          completadoEn: esManual ? null : new Date(),
         },
       });
+
+      // El reembolso total por fallo de stock tambien queda explicado por
+      // lineas. El envio se devuelve porque el pedido nunca se entrego.
+      await tx.reembolsoLinea.createMany({
+        data: sub.detalles.map((detalle) => ({
+          reembolsoId: reembolso.id,
+          detalleId: detalle.id,
+          cantidad: detalle.cantidad,
+          monto: BigInt(detalle.cantidad) * detalle.precioUnitario,
+        })),
+      });
+
       reembolsoIds.push(reembolso.id);
 
       // En modo real el dinero todavia no salio: no se escribe el movimiento

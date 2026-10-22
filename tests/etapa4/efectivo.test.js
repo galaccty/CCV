@@ -8,7 +8,12 @@ import {
 } from '../helpers/http.js';
 import { crearCatalogoParaVendedor, crearUsuarioDirecto } from '../helpers/datos.js';
 import { ajustarStock } from '../../src/services/stock.js';
-import { aceptarSubPedido } from '../../src/services/subPedidos.js';
+import {
+  aceptarSubPedido,
+  entregarSubPedido,
+} from '../../src/services/subPedidos.js';
+import { withTransaccion } from '../../src/lib/transaccion.js';
+import { registrarMovimiento } from '../../src/services/ledger.js';
 
 /**
  * PEDIDOS EN EFECTIVO - ETAPA 4b
@@ -70,6 +75,33 @@ async function pedidoEfectivo() {
     include: { subPedidos: true, pagos: true },
   });
   return { ...datos, respuesta: r, pedido, subPedido: pedido.subPedidos[0] };
+}
+
+async function pedidoEfectivoEnviado() {
+  const datos = await pedidoEfectivo();
+
+  const aceptar = await datos.vendedor.cliente.post(
+    `/api/v1/sub-pedidos/${datos.subPedido.id}/aceptar`,
+  );
+  assert.equal(aceptar.status, 200, JSON.stringify(aceptar.body));
+
+  const enviar = await datos.vendedor.cliente.post(
+    `/api/v1/sub-pedidos/${datos.subPedido.id}/enviar`,
+    { evidencia_envio: 'https://ejemplo.com/guia.pdf' },
+  );
+  assert.equal(enviar.status, 200, JSON.stringify(enviar.body));
+
+  return datos;
+}
+
+async function crearDeuda(localId, monto) {
+  await withTransaccion(async () => {
+    await registrarMovimiento({
+      tipo: 'deuda_reembolso',
+      monto,
+      localId,
+    });
+  });
 }
 
 describe('checkout en efectivo', () => {
@@ -225,6 +257,111 @@ describe('aceptacion de un pedido en efectivo', () => {
     assert.equal(pedidoDespues.estado, 'cancelado');
     assert.equal(pedidoDespues.pagos.length, 1);
     assert.equal(pedidoDespues.pagos[0].estado, 'rechazado');
+  });
+});
+
+describe('entrega de un pedido en efectivo', () => {
+  test('aprueba el pago, registra venta y comision, y suma la comision a la deuda', CON_BASE, async () => {
+    const {
+      comprador,
+      subPedido,
+      pedido,
+      local,
+    } = await pedidoEfectivoEnviado();
+
+    const r = await comprador.cliente.post(
+      `/api/v1/sub-pedidos/${subPedido.id}/entregar`,
+    );
+
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.estado, 'entregado');
+    assert.equal(r.body.entrega_confirmada_por, 'comprador');
+
+    const pago = await prisma.pago.findFirst({
+      where: { pedidoId: pedido.id },
+    });
+    assert.equal(pago.estado, 'aprobado');
+
+    const movimientos = await prisma.ledger.findMany({
+      where: { subPedidoId: subPedido.id },
+      orderBy: { id: 'asc' },
+    });
+    assert.deepEqual(
+      movimientos.map((m) => m.tipo),
+      ['venta', 'comision'],
+    );
+    assert.equal(movimientos[0].monto, 30000n);
+    assert.equal(movimientos[0].pagoId, pago.id);
+    assert.equal(movimientos[1].monto, 2000n);
+    assert.equal(movimientos[1].localId, local.id);
+    assert.equal(movimientos[1].pagoId, pago.id);
+
+    const cuenta = await prisma.cuentaLocal.findUnique({
+      where: { localId: local.id },
+    });
+    assert.equal(cuenta.saldoDeuda, 2000n);
+
+    const pedidoDespues = await prisma.pedido.findUnique({
+      where: { id: pedido.id },
+    });
+    assert.equal(pedidoDespues.estado, 'completado');
+  });
+
+  test('recalcula el estado del local cuando la comision supera el limite', CON_BASE, async () => {
+    const datos = await pedidoEfectivoEnviado();
+    await crearDeuda(datos.local.id, 49000n);
+
+    const r = await datos.comprador.cliente.post(
+      `/api/v1/sub-pedidos/${datos.subPedido.id}/entregar`,
+    );
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const local = await prisma.local.findUnique({
+      where: { id: datos.local.id },
+    });
+    const cuenta = await prisma.cuentaLocal.findUnique({
+      where: { localId: datos.local.id },
+    });
+    assert.equal(cuenta.saldoDeuda, 51000n);
+    assert.equal(local.estado, 'en_plazo');
+    assert.ok(cuenta.fechaLimitePago);
+  });
+
+  test('dos entregas simultaneas generan una sola comision', CON_BASE, async () => {
+    const { comprador, subPedido, local } = await pedidoEfectivoEnviado();
+    const actor = { id: comprador.id, roles: ['comprador'] };
+
+    const resultados = await Promise.allSettled([
+      entregarSubPedido({ usuario: actor, id: subPedido.id }),
+      entregarSubPedido({ usuario: actor, id: subPedido.id }),
+    ]);
+
+    const exitosas = resultados.filter((r) => r.status === 'fulfilled');
+    const fallidas = resultados.filter((r) => r.status === 'rejected');
+
+    assert.equal(exitosas.length, 1);
+    assert.equal(fallidas.length, 1);
+    assert.equal(fallidas[0].reason.codigo, 'transicion_invalida');
+
+    const comisiones = await prisma.ledger.findMany({
+      where: {
+        subPedidoId: subPedido.id,
+        tipo: 'comision',
+        localId: local.id,
+      },
+    });
+    assert.equal(comisiones.length, 1);
+    assert.equal(comisiones[0].monto, 2000n);
+
+    const cuenta = await prisma.cuentaLocal.findUnique({
+      where: { localId: local.id },
+    });
+    assert.equal(cuenta.saldoDeuda, 2000n);
+
+    const pagos = await prisma.pago.findMany({
+      where: { pedidoId: subPedido.pedidoId, estado: 'aprobado' },
+    });
+    assert.equal(pagos.length, 1);
   });
 });
 

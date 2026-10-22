@@ -8,6 +8,8 @@ import {
 } from '../lib/errores.js';
 import { derivarEstadoPedido, exigirTransicion } from '../domain/estados.js';
 import { descontarStock, ErrorStockInsuficiente } from './stock.js';
+import { registrarMovimiento } from './ledger.js';
+import { recalcularEstadoLocal } from './estadoLocal.js';
 
 /**
  * SUB-PEDIDOS: LECTURA DEL VENDEDOR Y MAQUINA DE ESTADOS
@@ -127,6 +129,30 @@ export async function listarSubPedidosVendedor({
   });
 }
 
+async function sincronizarEstadoPedido(tx, pedidoId) {
+  const pedido = await tx.pedido.findUnique({
+    where: { id: pedidoId },
+    select: { estado: true },
+  });
+
+  const estados = await tx.subPedido.findMany({
+    where: { pedidoId },
+    select: { estado: true },
+  });
+
+  const estadoDerivado = derivarEstadoPedido({
+    estadoActual: pedido.estado,
+    estadosSubPedidos: estados.map((fila) => fila.estado),
+  });
+
+  if (estadoDerivado !== pedido.estado) {
+    await tx.pedido.update({
+      where: { id: pedidoId },
+      data: { estado: estadoDerivado },
+    });
+  }
+}
+
 async function cambiarEstado({
   usuario,
   id,
@@ -167,27 +193,7 @@ async function cambiarEstado({
       },
     });
 
-    const pedido = await tx.pedido.findUnique({
-      where: { id: sub.pedidoId },
-      select: { estado: true },
-    });
-
-    const estados = await tx.subPedido.findMany({
-      where: { pedidoId: sub.pedidoId },
-      select: { estado: true },
-    });
-
-    const estadoDerivado = derivarEstadoPedido({
-      estadoActual: pedido.estado,
-      estadosSubPedidos: estados.map((fila) => fila.estado),
-    });
-
-    if (estadoDerivado !== pedido.estado) {
-      await tx.pedido.update({
-        where: { id: sub.pedidoId },
-        data: { estado: estadoDerivado },
-      });
-    }
+    await sincronizarEstadoPedido(tx, sub.pedidoId);
 
     const actualizado = await tx.subPedido.findUnique({
       where: { id: sub.id },
@@ -316,24 +322,114 @@ export function enviarSubPedido({ usuario, id, evidenciaEnvio }) {
   });
 }
 
-export function entregarSubPedido({ usuario, id }) {
-  // Se calcula quien confirma. Si el usuario es comprador y vendedor a la vez,
-  // se registra comprador; el admin queda como sistema.
-  return (async () => {
-    const sub = await cargarSubPedido(id);
-    const por = esCompradorDelPedido(sub, usuario)
-      ? 'comprador'
-      : esVendedorDelLocal(sub, usuario)
-        ? 'vendedor'
-        : 'sistema';
+async function entregarEfectivo({ sub, usuario, por }) {
+  return withTransaccion(async (tx) => {
+    const fechaEntrega = new Date();
 
-    return cambiarEstado({
-      usuario,
-      id,
-      hacia: 'entregado',
-      soloVendedor: false,
-      datosExtra: { fechaEntrega: new Date() },
-      entregaPor: por,
+    const cambiados = await tx.subPedido.updateMany({
+      where: { id: sub.id, estado: 'enviado' },
+      data: {
+        estado: 'entregado',
+        fechaEntrega,
+        entregaConfirmadaPor: por,
+      },
     });
-  })();
+
+    if (cambiados.count === 0) {
+      throw new ErrorApi(
+        'transicion_invalida',
+        'El sub-pedido cambio de estado mientras se procesaba la solicitud.',
+        409,
+      );
+    }
+
+    await tx.historialEstadoSubPedido.create({
+      data: {
+        subPedidoId: sub.id,
+        estadoAnterior: 'enviado',
+        estadoNuevo: 'entregado',
+        cambiadoPor: usuario.id,
+      },
+    });
+
+    const pago = await tx.pago.findFirst({
+      where: { pedidoId: sub.pedidoId, metodoPago: 'efectivo' },
+    });
+
+    if (!pago) {
+      throw new ErrorApi(
+        'pago_efectivo_no_encontrado',
+        'El pedido en efectivo no tiene su pago pendiente.',
+        409,
+      );
+    }
+
+    const pagoAprobado = await tx.pago.updateMany({
+      where: { id: pago.id, estado: 'pendiente' },
+      data: { estado: 'aprobado' },
+    });
+
+    if (pagoAprobado.count === 0) {
+      throw new ErrorApi(
+        'pago_efectivo_no_pendiente',
+        'El pago del pedido en efectivo ya no esta pendiente.',
+        409,
+      );
+    }
+
+    if (sub.subtotalProductos > 0n) {
+      await registrarMovimiento({
+        tipo: 'venta',
+        monto: sub.subtotalProductos,
+        localId: sub.localId,
+        subPedidoId: sub.id,
+        pagoId: pago.id,
+      });
+    }
+
+    if (sub.comision > 0n) {
+      await registrarMovimiento({
+        tipo: 'comision',
+        monto: sub.comision,
+        localId: sub.localId,
+        subPedidoId: sub.id,
+        pagoId: pago.id,
+      });
+    }
+
+    await recalcularEstadoLocal(sub.localId, tx);
+    await sincronizarEstadoPedido(tx, sub.pedidoId);
+
+    const actualizado = await tx.subPedido.findUnique({
+      where: { id: sub.id },
+      include: INCLUIR_DETALLES,
+    });
+
+    return convertirBigIntAJson(serializarSubPedido(actualizado));
+  });
+}
+
+export async function entregarSubPedido({ usuario, id }) {
+  const sub = await cargarSubPedido(id);
+  const por = esCompradorDelPedido(sub, usuario)
+    ? 'comprador'
+    : esVendedorDelLocal(sub, usuario)
+      ? 'vendedor'
+      : 'sistema';
+
+  validarPermiso(sub, usuario, false);
+  exigirTransicion(sub.estado, 'entregado');
+
+  if (esPedidoEnEfectivo(sub)) {
+    return entregarEfectivo({ sub, usuario, por });
+  }
+
+  return cambiarEstado({
+    usuario,
+    id,
+    hacia: 'entregado',
+    soloVendedor: false,
+    datosExtra: { fechaEntrega: new Date() },
+    entregaPor: por,
+  });
 }

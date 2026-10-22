@@ -27,6 +27,7 @@ servers:
     description: Desarrollo local
 
 tags:
+  - name: Autenticación
   - name: Catálogo
   - name: Carrito
   - name: Direcciones
@@ -40,6 +41,225 @@ security:
   - cookieSesion: []
 
 paths:
+  /api/v1/csrf:
+    get:
+      tags: [Autenticación]
+      summary: Obtener el token anti-CSRF
+      description: |
+        Devuelve el token que el frontend debe enviar en la cabecera
+        `X-CSRF-Token` en toda petición que modifica datos. Si el navegador
+        todavía no tiene la cookie `ccv_csrf`, esta petición la crea.
+      operationId: obtenerCsrf
+      security: []
+      responses:
+        '200':
+          description: Token anti-CSRF de la sesión del navegador
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CsrfTokenResponse'
+
+  /api/v1/auth/registro:
+    post:
+      tags: [Autenticación]
+      summary: Crear una cuenta de comprador o vendedor
+      description: |
+        El correo queda sin verificar y se envía un enlace de verificación.
+        No existe registro público de administradores. El rol `admin` no se
+        acepta en esta ruta.
+      operationId: registrarCuenta
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistroRequest'
+      responses:
+        '201':
+          description: Cuenta creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistroResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: Ya existe una cuenta con ese correo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/login:
+    post:
+      tags: [Autenticación]
+      summary: Iniciar sesión
+      description: |
+        Deja la cookie httpOnly `ccv_sesion`. Solo permite entrar a cuentas
+        activas con el correo verificado. La respuesta es idéntica exista o no
+        la cuenta, para no revelar qué correos están registrados.
+      operationId: iniciarSesion
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Sesión iniciada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          description: Credenciales inválidas, cuenta desactivada o correo sin verificar
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Autenticación]
+      summary: Cerrar sesión
+      description: |
+        Borra la cookie de sesión del navegador. No invalida el token firmado
+        en el servidor, que deja de servir cuando expira.
+      operationId: cerrarSesion
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Sesión cerrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MensajeResponse'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/yo:
+    get:
+      tags: [Autenticación]
+      summary: Ver la cuenta conectada
+      operationId: verCuentaConectada
+      security:
+        - cookieSesion: []
+      responses:
+        '200':
+          description: Cuenta de la sesión actual
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SesionResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/verificar-email:
+    post:
+      tags: [Autenticación]
+      summary: Verificar el correo con el token del enlace
+      description: El token sirve una sola vez y vence a las 24 horas.
+      operationId: verificarEmail
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerificarEmailRequest'
+      responses:
+        '200':
+          description: Correo verificado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificacionEmailResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/solicitar-restablecimiento:
+    post:
+      tags: [Autenticación]
+      summary: Pedir un enlace para restablecer la contraseña
+      description: |
+        Siempre responde lo mismo, exista o no la cuenta, para no revelar qué
+        correos están registrados. El enlace vence a las 2 horas.
+      operationId: solicitarRestablecimiento
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SolicitarRestablecimientoRequest'
+      responses:
+        '200':
+          description: Solicitud recibida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolicitudRestablecimientoResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/restablecer-contrasena:
+    post:
+      tags: [Autenticación]
+      summary: Restablecer la contraseña con el token del enlace
+      description: El token sirve una sola vez y vence a las 2 horas.
+      operationId: restablecerContrasena
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestablecerContrasenaRequest'
+      responses:
+        '200':
+          description: Contraseña restablecida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestablecimientoResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+
   /api/v1/pedidos:
     post:
       tags: [Pedidos]
@@ -1381,6 +1601,175 @@ components:
                 - type: array
                   items:
                     type: object
+
+    CsrfTokenResponse:
+      type: object
+      required: [token, cabecera]
+      properties:
+        token:
+          type: string
+          description: Mismo valor de la cookie `ccv_csrf`.
+        cabecera:
+          type: string
+          example: X-CSRF-Token
+
+    UsuarioCuenta:
+      type: object
+      required: [id, nombre, email, roles]
+      properties:
+        id:
+          type: integer
+        nombre:
+          type: string
+        email:
+          type: string
+          format: email
+        email_verificado:
+          type: boolean
+        telefono:
+          type: string
+          nullable: true
+          description: Solo dígitos, con `+` opcional al inicio.
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [comprador, vendedor, admin]
+
+    MensajeResponse:
+      type: object
+      required: [mensaje]
+      properties:
+        mensaje:
+          type: string
+
+    Contrasena:
+      type: string
+      minLength: 10
+      maxLength: 128
+      description: |
+        Debe tener al menos 10 caracteres, una minúscula, una mayúscula y un
+        número. Las contraseñas nunca se guardan en texto plano.
+
+    RegistroRequest:
+      type: object
+      required: [nombre, email, contrasena, acepto_terminos]
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 2
+          maxLength: 120
+        email:
+          type: string
+          format: email
+        contrasena:
+          $ref: '#/components/schemas/Contrasena'
+        roles:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [comprador, vendedor]
+        acepto_terminos:
+          type: boolean
+          enum: [true]
+
+    RegistroResponse:
+      type: object
+      required: [mensaje, usuario]
+      properties:
+        mensaje:
+          type: string
+        usuario:
+          $ref: '#/components/schemas/UsuarioCuenta'
+
+    LoginRequest:
+      type: object
+      required: [email, contrasena]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        contrasena:
+          type: string
+          minLength: 1
+
+    LoginResponse:
+      type: object
+      required: [mensaje, usuario]
+      properties:
+        mensaje:
+          type: string
+        usuario:
+          $ref: '#/components/schemas/UsuarioCuenta'
+
+    SesionResponse:
+      type: object
+      required: [usuario]
+      properties:
+        usuario:
+          $ref: '#/components/schemas/UsuarioCuenta'
+
+    VerificarEmailRequest:
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          minLength: 10
+
+    VerificacionEmailResponse:
+      type: object
+      required: [mensaje, email, verificado]
+      properties:
+        mensaje:
+          type: string
+        email:
+          type: string
+          format: email
+        verificado:
+          type: boolean
+
+    SolicitarRestablecimientoRequest:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+
+    SolicitudRestablecimientoResponse:
+      type: object
+      required: [mensaje, enviado]
+      properties:
+        mensaje:
+          type: string
+        enviado:
+          type: boolean
+
+    RestablecerContrasenaRequest:
+      type: object
+      required: [token, contrasena]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          minLength: 10
+        contrasena:
+          $ref: '#/components/schemas/Contrasena'
+
+    RestablecimientoResponse:
+      type: object
+      required: [mensaje, restablecida]
+      properties:
+        mensaje:
+          type: string
+        restablecida:
+          type: boolean
 
     Paginacion:
       type: object

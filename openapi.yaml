@@ -2164,6 +2164,81 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/v1/admin/reembolsos/{id}/completar:
+    post:
+      tags: [Admin]
+      summary: Confirmar que el dinero de un reembolso ya salio
+      description: |
+        Solo completa un reembolso `pendiente`, una sola vez. Los montos y las
+        lineas ya fueron calculados por el backend con los precios congelados:
+        este POST no recibe cuerpo ni acepta montos del cliente.
+
+        En la misma transaccion registra el reembolso de plataforma y, si el
+        saldo del vendedor ya fue liberado, el reembolso local, la reversa de
+        comision y el ajuste de redondeo que correspondan. Si el saldo no
+        alcanza despues de un payout, el resto pasa a `saldo_deuda`. Si el saldo
+        todavia no fue liberado, el asiento local y la comision quedan
+        diferidos a la liberacion. Tambien actualiza `pago.monto_reembolsado`
+        y el estado del sub-pedido.
+      operationId: completarReembolsoAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdReembolso'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Reembolso completado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reembolso'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: El reembolso ya no esta pendiente o la clave esta en proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/admin/reembolsos/{id}/fallar:
+    post:
+      tags: [Admin]
+      summary: Marcar un reembolso pendiente como fallido
+      description: |
+        Solo falla un reembolso `pendiente`, una sola vez. Si el reembolso
+        habia congelado saldo del vendedor, lo descongela en la misma
+        transaccion y deja una alerta para revision. No mueve
+        `pago.monto_reembolsado` porque el dinero nunca salio.
+      operationId: fallarReembolsoAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdReembolso'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Reembolso marcado como fallido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reembolso'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: El reembolso ya no esta pendiente o la clave esta en proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
 components:
   securitySchemes:
     cookieSesion:
@@ -2241,6 +2316,13 @@ components:
       name: id
       in: path
       required: true
+      schema:
+        type: integer
+    IdReembolso:
+      name: id
+      in: path
+      required: true
+      description: Identificador del reembolso.
       schema:
         type: integer
     IdProducto:
@@ -3944,6 +4026,95 @@ components:
             $ref: '#/components/schemas/Disputa'
         paginacion:
           $ref: '#/components/schemas/Paginacion'
+
+    ReembolsoLinea:
+      type: object
+      required: [id, reembolso_id, detalle_id, cantidad, monto]
+      properties:
+        id:
+          type: integer
+        reembolso_id:
+          type: integer
+        detalle_id:
+          type: integer
+          description: Linea de `detalle_producto` del sub-pedido reembolsado.
+        cantidad:
+          type: integer
+          minimum: 1
+        monto:
+          type: integer
+          minimum: 0
+          description: Calculado por el backend con el precio congelado.
+
+    Reembolso:
+      type: object
+      required:
+        - id
+        - pago_id
+        - sub_pedido_id
+        - tipo
+        - monto
+        - monto_envio
+        - incluye_envio
+        - desde_congelado
+        - estado
+        - motivo
+        - fecha
+        - lineas
+      properties:
+        id:
+          type: integer
+        pago_id:
+          type: integer
+        sub_pedido_id:
+          type: integer
+        disputa_id:
+          type: integer
+          nullable: true
+          description: Un reembolso como maximo por disputa.
+        tipo:
+          type: string
+          enum: [digital, efectivo]
+        monto:
+          type: integer
+          description: Suma de las lineas mas `monto_envio`, en pesos.
+        monto_envio:
+          type: integer
+          description: Parte del reembolso que corresponde al envio.
+        incluye_envio:
+          type: boolean
+          description: Solo puede ser verdadero si el pedido no tuvo entrega.
+        desde_congelado:
+          type: boolean
+          description: El reembolso local se paga contra `saldo_congelado`.
+        estado:
+          type: string
+          enum: [pendiente, completado, incumplido, fallido]
+        motivo:
+          type: string
+        fecha:
+          type: string
+          format: date-time
+        fecha_limite:
+          type: string
+          format: date-time
+          nullable: true
+          description: Solo para reembolsos en efectivo.
+        registrado_por:
+          type: integer
+          nullable: true
+          description: Admin que registro o completo el reembolso.
+        completado_en:
+          type: string
+          format: date-time
+          nullable: true
+        actualizado_en:
+          type: string
+          format: date-time
+        lineas:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReembolsoLinea'
 
     EventoWompi:
       type: object

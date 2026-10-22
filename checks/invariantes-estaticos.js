@@ -75,11 +75,20 @@ const PRUEBAS_QUE_VIOLAN_CUENTA_LOCAL = new Set([
 // Reglas de deteccion
 // ---------------------------------------------------------------------------
 
-const COLUMNAS_SALDO = ['saldo_deuda', 'saldo_por_pagar', 'saldo_congelado'];
+const COLUMNAS_SALDO = [
+  'saldo_deuda',
+  'saldo_por_pagar',
+  'saldo_congelado',
+  // Nombres del cliente Prisma. La regla tambien tiene que ver una asignacion
+  // directa como `cuenta.saldoPorPagar = ...`, no solo el SQL a mano.
+  'saldoDeuda',
+  'saldoPorPagar',
+  'saldoCongelado',
+];
 
 /** SQL escrito a mano: UPDATE cuenta_local ... SET saldo_deuda = ... */
 const REGLA_SQL_SALDO = new RegExp(
-  String.raw`UPDATE\s+"?cuenta_local"?[\s\S]{0,120}?\bSET\b`,
+  String.raw`UPDATE\s+"?cuenta_local"?[\s\S]{0,120}?\bSET\b[\s\S]{0,300}?\b(saldo_deuda|saldo_por_pagar|saldo_congelado)\b\s*=`,
   'i',
 );
 
@@ -91,7 +100,7 @@ const REGLA_ORM_SALDO = new RegExp(
 
 /** Asignacion directa a una columna de saldo. */
 const REGLA_ASIGNACION_SALDO = new RegExp(
-  `${COLUMNAS_SALDO.join('|')}\\s*(=|:=)\\s*[^=]`,
+  `(${COLUMNAS_SALDO.join('|')})\\s*(=|:=)\\s*[^=]`,
   'i',
 );
 
@@ -257,6 +266,101 @@ export function analizarInvariante7(contenido, rutaRelativa = 'archivo-simulado.
   return violaciones;
 }
 
+/**
+ * Analiza un contenido simulado del invariante 1. Se exporta para que las
+ * pruebas demuestren que el guardian SI detecta las escrituras prohibidas,
+ * incluidas las de los tipos nuevos del ledger, y que solo deja pasar al
+ * servicio del ledger.
+ */
+export function analizarInvariante1(contenido, rutaRelativa = 'archivo-simulado.js') {
+  if (listaBlanca(1, rutaRelativa)) return [];
+
+  const lineas = Array.isArray(contenido)
+    ? contenido
+    : String(contenido).split(/\r?\n/);
+  const violaciones = [];
+  const NOMBRE = 'El ledger es la fuente de verdad';
+
+  for (let indice = 0; indice < lineas.length; indice += 1) {
+    const linea = lineas[indice];
+    if (esComentario(linea)) continue;
+
+    const ventana = lineas.slice(indice, indice + 8).join('\n');
+    const ventanaOrm = lineas.slice(indice, indice + 30).join('\n');
+    const escrituraSql = /\bUPDATE\s+"?cuenta_local"?/i.test(linea);
+    const escrituraOrm = linea.match(REGLA_ORM_SALDO);
+    // Un UPDATE de cuenta_local que solo toca fecha_limite_pago no mueve
+    // saldos y esta permitido. La regla exige que aparezca una columna de
+    // saldo en el SET.
+    const asignacionDirecta =
+      !/\bSET\b/i.test(linea) && REGLA_ASIGNACION_SALDO.test(linea);
+
+    if (escrituraSql && REGLA_SQL_SALDO.test(ventana)) {
+      violaciones.push({
+        invariante: 1,
+        nombre: NOMBRE,
+        archivo: rutaRelativa,
+        linea: indice + 1,
+        como: 'UPDATE SQL sobre cuenta_local',
+        texto: linea.trim().slice(0, 100),
+      });
+      continue;
+    }
+
+    if (escrituraOrm) {
+      const metodo = escrituraOrm[2].toLowerCase();
+      const creaOBorra = ['create', 'createmany', 'delete', 'deletemany'].includes(
+        metodo,
+      );
+      const escribeSaldo = COLUMNAS_SALDO.some((campo) =>
+        new RegExp(`\\b${campo}\\s*:`).test(ventanaOrm),
+      );
+
+      if (creaOBorra || escribeSaldo) {
+        violaciones.push({
+          invariante: 1,
+          nombre: NOMBRE,
+          archivo: rutaRelativa,
+          linea: indice + 1,
+          como: 'escritura por el ORM sobre cuenta_local',
+          texto: linea.trim().slice(0, 100),
+        });
+        continue;
+      }
+    }
+
+    if (asignacionDirecta) {
+      violaciones.push({
+        invariante: 1,
+        nombre: NOMBRE,
+        archivo: rutaRelativa,
+        linea: indice + 1,
+        como: 'asignacion directa a una columna de saldo',
+        texto: linea.trim().slice(0, 100),
+      });
+    }
+  }
+
+  return violaciones;
+}
+
+function revisarInvariante1() {
+  const violaciones = [];
+
+  for (const carpeta of CARPETAS_REVISADAS) {
+    const absoluta = path.join(RAIZ, carpeta);
+    if (!fs.existsSync(absoluta)) continue;
+
+    for (const archivo of recorrer(absoluta)) {
+      const relativa = path.relative(RAIZ, archivo).replace(/\\/g, '/');
+      if (PRUEBAS_QUE_VIOLAN_CUENTA_LOCAL.has(relativa)) continue;
+      violaciones.push(...analizarInvariante1(lineasDe(archivo), relativa));
+    }
+  }
+
+  return violaciones;
+}
+
 function revisarInvariante7() {
   const violaciones = [];
 
@@ -275,17 +379,7 @@ function revisarInvariante7() {
 
 export function ejecutarChequeos() {
   const resultados = [
-    revisarInvariante({
-      invariante: 1,
-      nombre: 'El ledger es la fuente de verdad',
-      reglas: [
-        { patron: REGLA_SQL_SALDO, como: 'UPDATE SQL sobre cuenta_local' },
-        { patron: REGLA_ORM_SALDO, como: 'escritura por el ORM sobre cuenta_local' },
-        { patron: REGLA_ASIGNACION_SALDO, como: 'asignacion directa a una columna de saldo' },
-      ],
-      exclusiones: (relativa) =>
-        PRUEBAS_QUE_VIOLAN_CUENTA_LOCAL.has(relativa),
-    }),
+    revisarInvariante1(),
 
     revisarInvariante7(),
 

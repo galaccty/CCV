@@ -186,7 +186,12 @@ describe('invariante 11 - nada financiero se borra', () => {
 
   test('borrar la cuenta de un local falla en la base', CON_BASE, async () => {
     const { local } = await crearCatalogo();
-    await prisma.cuentaLocal.create({ data: { localId: local.id } });
+    // El trigger ccv_cuenta_local_por_local ya creo la cuenta al insertar
+    // el local. Se usa la existente; no se crea una segunda.
+    const existente = await prisma.cuentaLocal.findUnique({
+      where: { localId: local.id },
+    });
+    assert.ok(existente, 'el trigger debe haber creado la cuenta del local');
 
     await assert.rejects(
       () => prisma.cuentaLocal.delete({ where: { localId: local.id } }),

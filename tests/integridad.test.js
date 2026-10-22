@@ -225,9 +225,12 @@ describe('restricciones de integridad 4.13', () => {
 
   test('la cuenta de un local no puede tener saldos negativos', CON_BASE, async () => {
     const { local } = await crearCatalogo({ precio: 10000n });
-    const cuenta = await prisma.cuentaLocal.create({
-      data: { localId: local.id },
+    // El trigger ccv_cuenta_local_por_local ya creo la cuenta al insertar
+    // el local. Se usa esa fila en vez de crear una segunda.
+    const cuenta = await prisma.cuentaLocal.findUnique({
+      where: { localId: local.id },
     });
+    assert.ok(cuenta, 'el trigger debe haber creado la cuenta del local');
 
     await assert.rejects(
       () =>

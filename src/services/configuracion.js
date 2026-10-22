@@ -54,6 +54,26 @@ export function obtener(clave, porDefecto = undefined) {
   return valor === null || Number.isNaN(valor) ? porDefecto : valor;
 }
 
+/**
+ * Lee claves directamente dentro de una transaccion.
+ *
+ * `recalcular_estado_local` necesita los valores EN VIVO y en la misma
+ * transaccion que bloquea el local. No usa la cache porque el admin puede
+ * haber cambiado `limite_deuda` o `plazo_dias` hace un instante.
+ */
+export async function obtenerConfiguracionEnTransaccion(tx, claves) {
+  const filas = await tx.configuracion.findMany({
+    where: { clave: { in: claves } },
+    select: { clave: true, valor: true, tipo: true },
+  });
+
+  const valores = {};
+  for (const fila of filas) {
+    valores[fila.clave] = interpretar(fila.valor, fila.tipo);
+  }
+  return valores;
+}
+
 export function obtenerEntero(clave, porDefecto = 0) {
   const v = obtener(clave, porDefecto);
   return typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : porDefecto;
@@ -90,6 +110,9 @@ export const CLAVES_EN_VIVO = [
   'dias_auto_entrega',
   'minutos_expiracion_pago',
   'horas_aceptacion',
+  'dias_reembolso_efectivo',
+  'intentos_maximos_reembolso',
+  'monto_minimo_liquidacion',
 ];
 
 export function esCongelada(clave) {

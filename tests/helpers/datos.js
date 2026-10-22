@@ -125,6 +125,9 @@ const CONFIGURACION_BASE = [
   ['dias_auto_entrega', '7', 'entero'],
   ['minutos_expiracion_pago', '30', 'entero'],
   ['horas_aceptacion', '48', 'entero'],
+  ['dias_reembolso_efectivo', '5', 'entero'],
+  ['intentos_maximos_reembolso', '5', 'entero'],
+  ['monto_minimo_liquidacion', '0', 'entero'],
 ];
 
 export async function sembrarConfiguracion(sobrescrituras = {}) {
@@ -242,12 +245,13 @@ export async function crearReembolsoDePrueba({
   subPedido,
   monto = pago.monto,
   estado = 'pendiente',
+  tipo = 'digital',
 } = {}) {
   return prisma.reembolso.create({
     data: {
       pagoId: pago.id,
       subPedidoId: subPedido.id,
-      tipo: 'digital',
+      tipo,
       monto: aBigInt(monto, 'monto'),
       estado,
       motivo: 'prueba',

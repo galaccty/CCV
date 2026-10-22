@@ -116,6 +116,9 @@ const CONFIGURACION_BASE = [
   ['dias_auto_entrega', '7', 'entero'],
   ['minutos_expiracion_pago', '30', 'entero'],
   ['horas_aceptacion', '48', 'entero'],
+  ['dias_reembolso_efectivo', '5', 'entero'],
+  ['intentos_maximos_reembolso', '5', 'entero'],
+  ['monto_minimo_liquidacion', '0', 'entero'],
 ];
 
 async function sembrarConfiguracion() {

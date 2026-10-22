@@ -43,6 +43,12 @@ export const CONFIGURACION_INICIAL = [
     'Minutos que un pedido digital espera su pago antes de expirar. Se lee en vivo.'],
   ['horas_aceptacion', '48', 'entero',
     'Horas que un vendedor tiene para aceptar un pedido en efectivo antes de que se cancele. Se lee en vivo.'],
+  ['dias_reembolso_efectivo', '5', 'entero',
+    'Dias que el vendedor tiene para reembolsar en efectivo antes de incumplir. Se lee en vivo.'],
+  ['intentos_maximos_reembolso', '5', 'entero',
+    'Intentos antes de marcar un reembolso como fallido y alertar. Se lee en vivo.'],
+  ['monto_minimo_liquidacion', '0', 'entero',
+    'Monto minimo de una liquidacion; 0 permite lotes de cualquier tamano. Se lee en vivo.'],
 ];
 
 export async function sembrarConfiguracion({ registrarAuditoria = false } = {}) {

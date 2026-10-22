@@ -1,4 +1,20 @@
 import { prisma } from '../lib/prisma.js';
+import { aBigInt, restar, sumar } from '../lib/dinero.js';
+
+/**
+ * Monto que se acredita al vendedor cuando vence la retencion.
+ *
+ * Formula aprobada: subtotal_productos + costo_envio - comision. El envio se
+ * acredita al vendedor porque el asume el flete; la comision solo se calcula
+ * sobre los productos. Si el neto da cero no se escribe asiento.
+ */
+export function calcularMontoLiberacion({ subtotalProductos, costoEnvio, comision }) {
+  const bruto = sumar(
+    aBigInt(subtotalProductos, 'subtotal_productos'),
+    aBigInt(costoEnvio, 'costo_envio'),
+  );
+  return restar(bruto, aBigInt(comision, 'comision'));
+}
 
 /**
  * LIBERACION DE SALDO - CONSULTA BASE

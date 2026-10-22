@@ -17,15 +17,26 @@ import { aBigInt } from '../lib/dinero.js';
  * de `withTransaccion`. Asi es imposible llamarlo fuera de una transaccion y
  * olvidarse de la atomicidad.
  *
- * Efectos de cada tipo en la Etapa 2:
- *   - venta: crea la cuenta del local, pero NO suma saldo_por_pagar. La
- *     liberacion ocurre recien con el job de retencion (Etapa 4).
- *   - comision: no toca la cuenta del local; es ingreso de la plataforma.
- *   - pago_recibido: no toca la cuenta del local; es el pago del comprador.
- *   - reembolso: si tiene local_id, descuenta saldo_por_pagar. En la Etapa 2
- *     el reembolso por fallo de stock es de plataforma (local_id nulo).
- *   - pago_a_local: descuenta saldo_por_pagar (Etapa 4).
- *   - cobro_deuda: descuenta saldo_deuda (Etapa 4).
+ * Efectos:
+ *   - venta: no toca la cuenta. La liberacion ocurre con el job de retencion.
+ *   - liberacion: suma saldo_por_pagar. El monto se calcula como
+ *     subtotal_productos + costo_envio - comision (el envio es del vendedor).
+ *   - comision: sin local_id es ingreso de la plataforma. Con local_id (venta
+ *     en efectivo) suma saldo_deuda.
+ *   - reversa_comision: sin local_id reduce ingreso de la plataforma. Con
+ *     local_id descuenta saldo_deuda si la comision fue en efectivo o acredita
+ *     saldo_por_pagar si fue digital. Se infiere del movimiento original.
+ *   - pago_recibido, ingreso_publicidad, ajuste: no tocan la cuenta.
+ *   - reembolso: con local_id descuenta saldo_congelado si `desdeCongelado`;
+ *     si no, descuenta saldo_por_pagar. Sin local_id es registro de plataforma.
+ *   - congelacion: pasa saldo de por_pagar a congelado.
+ *   - descongelacion: pasa saldo de congelado a por_pagar.
+ *   - deuda_reembolso: suma saldo_deuda.
+ *   - pago_a_local: descuenta saldo_por_pagar.
+ *   - cobro_deuda: descuenta saldo_deuda.
+ *   - reversa_pago_a_local: devuelve saldo_por_pagar.
+ *   - reversa_cobro_deuda: devuelve saldo_deuda.
+ *   - ajuste_redondeo: credito o debito explicito sobre la cuenta indicada.
  */
 
 const TIPOS = new Set([
@@ -39,19 +50,80 @@ const TIPOS = new Set([
   'ingreso_publicidad',
   'ajuste',
   'ajuste_redondeo',
+  'liberacion',
+  'congelacion',
+  'descongelacion',
+  'deuda_reembolso',
+  'reversa_pago_a_local',
+  'reversa_cobro_deuda',
 ]);
 
+const CAMPOS_SALDO = new Set(['saldoDeuda', 'saldoPorPagar', 'saldoCongelado']);
+
+const efecto = (campo, signo) => ({ campo, signo });
+
 const EFECTOS = {
-  venta: null,
-  comision: null,
-  reversa_comision: null,
-  pago_recibido: null,
-  ingreso_publicidad: null,
-  ajuste: null,
-  ajuste_redondeo: null,
-  pago_a_local: { campo: 'saldoPorPagar', signo: -1 },
-  cobro_deuda: { campo: 'saldoDeuda', signo: -1 },
-  reembolso: { campo: 'saldoPorPagar', signo: -1 },
+  venta: () => [],
+  pago_recibido: () => [],
+  ingreso_publicidad: () => [],
+  ajuste: () => [],
+
+  comision: ({ localId }) => (localId ? [efecto('saldoDeuda', 1)] : []),
+
+  reversa_comision: async ({ tx, localId, subPedidoId }) => {
+    if (!localId) return [];
+    if (!subPedidoId) {
+      throw new Error(
+        'reversa_comision con local_id requiere sub_pedido_id para saber ' +
+          'si la comision se cobro en efectivo o digitalmente.',
+      );
+    }
+
+    const comisionEnEfectivo = await tx.ledger.findFirst({
+      where: { subPedidoId, localId, tipo: 'comision' },
+      select: { id: true },
+    });
+
+    return comisionEnEfectivo
+      ? [efecto('saldoDeuda', -1)]
+      : [efecto('saldoPorPagar', 1)];
+  },
+
+  reembolso: ({ localId, desdeCongelado }) => {
+    if (!localId) return [];
+    return [efecto(desdeCongelado ? 'saldoCongelado' : 'saldoPorPagar', -1)];
+  },
+
+  ajuste_redondeo: ({ localId, direccion, cuentaAjuste = 'saldoPorPagar' }) => {
+    if (!localId) return [];
+    if (direccion !== 'credito' && direccion !== 'debito') {
+      throw new Error(
+        'ajuste_redondeo con local_id requiere direccion "credito" o "debito".',
+      );
+    }
+    if (!CAMPOS_SALDO.has(cuentaAjuste)) {
+      throw new Error(
+        `Cuenta invalida para ajuste_redondeo: ${cuentaAjuste}. ` +
+          `Usa una de: ${[...CAMPOS_SALDO].join(', ')}.`,
+      );
+    }
+    return [efecto(cuentaAjuste, direccion === 'credito' ? 1 : -1)];
+  },
+
+  liberacion: () => [efecto('saldoPorPagar', 1)],
+  deuda_reembolso: () => [efecto('saldoDeuda', 1)],
+  reversa_pago_a_local: () => [efecto('saldoPorPagar', 1)],
+  reversa_cobro_deuda: () => [efecto('saldoDeuda', 1)],
+  pago_a_local: () => [efecto('saldoPorPagar', -1)],
+  cobro_deuda: () => [efecto('saldoDeuda', -1)],
+  congelacion: () => [
+    efecto('saldoPorPagar', -1),
+    efecto('saldoCongelado', 1),
+  ],
+  descongelacion: () => [
+    efecto('saldoCongelado', -1),
+    efecto('saldoPorPagar', 1),
+  ],
 };
 
 function validarId(valor, campo) {
@@ -80,6 +152,9 @@ async function asegurarCuenta(tx, localId) {
  * @param {number|null} [datos.subPedidoId]
  * @param {number|null} [datos.pagoId]
  * @param {number|null} [datos.reembolsoId]
+ * @param {boolean} [datos.desdeCongelado] reembolso contra saldo_congelado
+ * @param {'credito'|'debito'} [datos.direccion] solo ajuste_redondeo
+ * @param {'saldoDeuda'|'saldoPorPagar'|'saldoCongelado'} [datos.cuentaAjuste]
  */
 export async function registrarMovimiento({
   tipo,
@@ -88,6 +163,9 @@ export async function registrarMovimiento({
   subPedidoId = null,
   pagoId = null,
   reembolsoId = null,
+  desdeCongelado = false,
+  direccion = null,
+  cuentaAjuste = 'saldoPorPagar',
 }) {
   const contexto = transaccionActual();
 
@@ -103,32 +181,49 @@ export async function registrarMovimiento({
     throw new Error(`Tipo de movimiento invalido: ${tipo}`);
   }
 
+  if (typeof desdeCongelado !== 'boolean') {
+    throw new Error('El campo desde_congelado debe ser booleano.');
+  }
+
   const montoBig = aBigInt(monto, 'monto');
   if (montoBig <= 0n) {
     throw new Error('El monto de un movimiento debe ser mayor que cero.');
   }
 
   const tx = contexto.tx;
+  const localIdNormalizado = validarId(localId, 'local_id');
+  const subPedidoIdNormalizado = validarId(subPedidoId, 'sub_pedido_id');
+
+  // Se calcula antes de insertar: reversa_comision necesita mirar el
+  // movimiento original y ajuste_redondeo valida su direccion.
+  const efectos = await EFECTOS[tipo]({
+    tx,
+    localId: localIdNormalizado,
+    subPedidoId: subPedidoIdNormalizado,
+    desdeCongelado,
+    direccion,
+    cuentaAjuste,
+  });
+
   const movimiento = await tx.ledger.create({
     data: {
       tipo,
       monto: montoBig,
-      localId: validarId(localId, 'local_id'),
-      subPedidoId: validarId(subPedidoId, 'sub_pedido_id'),
+      localId: localIdNormalizado,
+      subPedidoId: subPedidoIdNormalizado,
       pagoId: validarId(pagoId, 'pago_id'),
       reembolsoId: validarId(reembolsoId, 'reembolso_id'),
     },
   });
 
-  if (localId) {
-    await asegurarCuenta(tx, localId);
+  if (localIdNormalizado) {
+    await asegurarCuenta(tx, localIdNormalizado);
 
-    const efecto = EFECTOS[tipo];
-    if (efecto) {
-      const delta = efecto.signo < 0 ? -montoBig : montoBig;
+    for (const cambio of efectos) {
+      const delta = cambio.signo < 0 ? -montoBig : montoBig;
       await tx.cuentaLocal.update({
-        where: { localId },
-        data: { [efecto.campo]: { increment: delta } },
+        where: { localId: localIdNormalizado },
+        data: { [cambio.campo]: { increment: delta } },
       });
     }
   }

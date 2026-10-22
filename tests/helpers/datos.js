@@ -155,6 +155,7 @@ export async function crearPedidoDePrueba({
   precioUnitario,
   comision = 0n,
   costoEnvio = 0n,
+  metodoPago = 'tarjeta',
   estadoPedido = 'pendiente_pago',
   estadoSubPedido = 'por_aceptar',
 } = {}) {
@@ -180,7 +181,7 @@ export async function crearPedidoDePrueba({
         direccionLatitud: 4.65,
         direccionLongitud: -74.05,
         total,
-        metodoPago: 'tarjeta',
+        metodoPago,
         estado: estadoPedido,
         configSnapshot: {
           porcentaje_comision: 5,

@@ -23,11 +23,12 @@ export function calcularMontoLiberacion({ subtotalProductos, costoEnvio, comisio
  * escrita la regla que ese job debera usar y permite probar desde ahora la
  * parte del invariante 6 que ya se puede cumplir:
  *
- *   un sub_pedido con un reembolso pendiente NO es elegible para liberar saldo.
+ *   un sub_pedido con reembolso pendiente NO es elegible para liberar saldo;
+ *   un sub_pedido con disputa abierta tampoco.
  *
  * Tambien exige que el sub_pedido este entregado, que hayan pasado los dias de
- * retencion del snapshot del pedido y que `saldo_liberado_en` siga nulo. Las
- * disputas y la escritura del saldo siguen siendo parte de la Etapa 4.
+ * retencion del snapshot del pedido y que `saldo_liberado_en` siga nulo. La
+ * escritura del saldo sigue siendo parte de la Etapa 4d.
  */
 export async function subPedidosElegiblesParaLiberar({ ahora = new Date() } = {}) {
   const candidatos = await prisma.subPedido.findMany({
@@ -44,12 +45,16 @@ export async function subPedidosElegiblesParaLiberar({ ahora = new Date() } = {}
         where: { estado: 'pendiente' },
         select: { id: true },
       },
+      disputa: {
+        select: { id: true, estado: true },
+      },
     },
   });
 
   return candidatos
     .filter((sub) => {
       if (sub.reembolsos.length > 0) return false;
+      if (sub.disputa?.estado === 'abierta') return false;
 
       const dias = Number(sub.pedido.configSnapshot?.dias_retencion ?? 0);
       if (!Number.isFinite(dias) || dias < 0) return false;

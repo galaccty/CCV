@@ -3,21 +3,22 @@ import { ErrorApi } from '../lib/errores.js';
 /**
  * MAQUINA DE ESTADOS DEL SUB-PEDIDO (seccion 4.3)
  * ===============================================
- * Las transiciones validas de la Etapa 2 son:
+ * Las transiciones validas son:
  *
  *   por_aceptar -> preparando -> enviado -> entregado
  *   por_aceptar -> cancelado
  *   preparando  -> cancelado
+ *   enviado     -> en_disputa
+ *   entregado   -> en_disputa
  *
- * `entregado -> en_disputa` se deja declarada porque la disputa existe en la
- * especificacion, pero la ruta que la abre llega en la Etapa 4. No hay ninguna
- * transicion automatica a `en_disputa` en esta etapa.
+ * `en_disputa` no es terminal. La resolucion (4c-2) decide si el sub-pedido
+ * vuelve a su estado anterior o pasa a reembolsado/reembolsado_parcial.
  */
 
 export const TRANSICIONES_SUB_PEDIDO = Object.freeze({
   por_aceptar: ['preparando', 'cancelado'],
   preparando: ['enviado', 'cancelado'],
-  enviado: ['entregado'],
+  enviado: ['entregado', 'en_disputa'],
   entregado: ['en_disputa'],
   en_disputa: [],
   cancelado: [],

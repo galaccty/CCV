@@ -153,6 +153,7 @@ async function asegurarCuenta(tx, localId) {
  * @param {number|null} [datos.pagoId]
  * @param {number|null} [datos.reembolsoId]
  * @param {number|null} [datos.pagoDeudaId] pago de deuda que origino el cobro
+ * @param {number|null} [datos.disputaId] disputa que origino congelacion/descongelacion
  * @param {boolean} [datos.desdeCongelado] reembolso contra saldo_congelado
  * @param {'credito'|'debito'} [datos.direccion] solo ajuste_redondeo
  * @param {'saldoDeuda'|'saldoPorPagar'|'saldoCongelado'} [datos.cuentaAjuste]
@@ -165,6 +166,7 @@ export async function registrarMovimiento({
   pagoId = null,
   reembolsoId = null,
   pagoDeudaId = null,
+  disputaId = null,
   desdeCongelado = false,
   direccion = null,
   cuentaAjuste = 'saldoPorPagar',
@@ -216,6 +218,7 @@ export async function registrarMovimiento({
       pagoId: validarId(pagoId, 'pago_id'),
       reembolsoId: validarId(reembolsoId, 'reembolso_id'),
       pagoDeudaId: validarId(pagoDeudaId, 'pago_deuda_id'),
+      disputaId: validarId(disputaId, 'disputa_id'),
     },
   });
 

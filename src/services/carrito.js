@@ -40,22 +40,35 @@ function precioSubtotal(precio, cantidad) {
   return precio * BigInt(cantidad);
 }
 
+/**
+ * La foto principal es la primera del arreglo `fotos` del producto.
+ * Los datos viejos pueden tener null u otra forma: solo se aceptan strings.
+ */
+function fotoPrincipal(fotos) {
+  if (!Array.isArray(fotos)) return null;
+  return fotos.find((foto) => typeof foto === 'string' && foto.trim() !== '') ?? null;
+}
+
 function serializarItem(item) {
   const { variante } = item;
   const producto = variante.producto;
+  const local = producto.local;
   const disponible =
     variante.activo &&
     producto.activo &&
-    puedeVenderLocal(producto.local.estado) &&
+    puedeVenderLocal(local.estado) &&
     variante.stock >= item.cantidad;
 
   return {
     id: item.id,
     variante_id: item.varianteId,
     cantidad: item.cantidad,
+    local_id: local.id,
+    nombre_local: local.nombre,
     producto_id: producto.id,
     nombre_producto: producto.nombre,
     atributos: variante.atributos,
+    foto_principal: fotoPrincipal(producto.fotos),
     precio_unitario: variante.precio,
     subtotal: precioSubtotal(variante.precio, item.cantidad),
     disponible,

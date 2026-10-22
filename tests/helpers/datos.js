@@ -66,6 +66,8 @@ export async function crearCatalogoParaVendedor({
   stockInicial = 10,
   estadoLocal = 'activo',
   activoVariante = true,
+  fotos = null,
+  atributosVariante = { talla: 'M' },
 } = {}) {
   if (!Number.isInteger(vendedorId) || vendedorId <= 0) {
     throw new Error(`Vendedor invalido: ${vendedorId}`);
@@ -92,12 +94,13 @@ export async function crearCatalogoParaVendedor({
       localId: local.id,
       categoriaGlobalId: categoria.id,
       nombre: `Producto ${sufijo()}`,
+      fotos,
       activo: true,
     },
   });
   const variante = await crearVariante(prisma, {
     productoId: producto.id,
-    atributos: { talla: 'M' },
+    atributos: atributosVariante,
     precio,
     stock: stockInicial,
     activo: activoVariante,

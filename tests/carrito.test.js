@@ -85,6 +85,48 @@ describe('carrito', () => {
     assert.equal(vacio.body.total_productos, 0);
   });
 
+  test('cada item incluye local, atributos de la variante y foto principal', CON_BASE, async () => {
+    const comprador = await crearUsuarioConSesion();
+    const conFoto = await crearCatalogo({
+      precio: 12000n,
+      stockInicial: 5,
+      fotos: [
+        'https://cdn.ejemplo.com/productos/principal.jpg',
+        'https://cdn.ejemplo.com/productos/segunda.jpg',
+      ],
+      atributosVariante: { talla: 'L', color: 'rojo' },
+    });
+    const sinFoto = await crearCatalogo({ precio: 8000n, stockInicial: 5, fotos: null });
+
+    await comprador.cliente.put(`/api/v1/carrito/items/${conFoto.variante.id}`, {
+      cantidad: 1,
+    });
+    await comprador.cliente.put(`/api/v1/carrito/items/${sinFoto.variante.id}`, {
+      cantidad: 1,
+    });
+
+    const r = await comprador.cliente.get('/api/v1/carrito');
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const itemConFoto = r.body.items.find(
+      (item) => item.variante_id === conFoto.variante.id,
+    );
+    assert.equal(itemConFoto.local_id, conFoto.local.id);
+    assert.equal(itemConFoto.nombre_local, conFoto.local.nombre);
+    assert.deepEqual(itemConFoto.atributos, { talla: 'L', color: 'rojo' });
+    assert.equal(
+      itemConFoto.foto_principal,
+      'https://cdn.ejemplo.com/productos/principal.jpg',
+    );
+
+    const itemSinFoto = r.body.items.find(
+      (item) => item.variante_id === sinFoto.variante.id,
+    );
+    assert.equal(itemSinFoto.local_id, sinFoto.local.id);
+    assert.equal(itemSinFoto.nombre_local, sinFoto.local.nombre);
+    assert.equal(itemSinFoto.foto_principal, null);
+  });
+
   test('marca como no disponible un item sin stock suficiente', CON_BASE, async () => {
     const comprador = await crearUsuarioConSesion();
     const { variante } = await crearCatalogo({

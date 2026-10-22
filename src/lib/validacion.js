@@ -327,3 +327,42 @@ export const esquemaFiltrosCategorias = z.object({
   rubro_id: z.coerce.number().int().positive().optional(),
   padre_id: z.coerce.number().int().positive().nullable().optional(),
 });
+
+export const METODOS_PAGO_DEUDA = ['transferencia', 'efectivo', 'manual'];
+export const ESTADOS_PAGO_DEUDA = ['pendiente', 'confirmado', 'rechazado'];
+
+const esquemaMontoPagoDeuda = z.coerce
+  .number()
+  .int()
+  .positive()
+  .max(Number.MAX_SAFE_INTEGER);
+
+const esquemaReferenciaPagoDeuda = z.string().trim().min(1).max(255);
+
+const esquemaComprobantePagoDeuda = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2000)
+  .nullable()
+  .optional();
+
+export const esquemaReportarPagoDeuda = z.object({
+  local_id: z.coerce.number().int().positive(),
+  monto: esquemaMontoPagoDeuda,
+  metodo: z.enum(METODOS_PAGO_DEUDA),
+  referencia: esquemaReferenciaPagoDeuda,
+  comprobante_url: esquemaComprobantePagoDeuda,
+});
+
+export const esquemaRegistrarPagoDeuda = z.object({
+  monto: esquemaMontoPagoDeuda,
+  metodo: z.enum(METODOS_PAGO_DEUDA),
+  referencia: esquemaReferenciaPagoDeuda,
+  comprobante_url: esquemaComprobantePagoDeuda,
+});
+
+export const esquemaFiltrosPagosDeuda = z.object({
+  local_id: z.coerce.number().int().positive().optional(),
+  estado: z.enum(ESTADOS_PAGO_DEUDA).optional(),
+});

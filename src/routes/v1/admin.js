@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import * as adminCatalogo from '../../services/adminCatalogo.js';
+import * as pagoDeuda from '../../services/pagoDeuda.js';
 import { requiereRol } from '../../middlewares/sesion.js';
+import { idempotenciaRequerida } from '../../middlewares/idempotencia.js';
 import {
   esquemaActualizarCategoriaGlobal,
   esquemaActualizarRubro,
@@ -9,6 +11,7 @@ import {
   esquemaCrearRubro,
   esquemaFiltrosLocales,
   esquemaIdPositivo,
+  esquemaRegistrarPagoDeuda,
   leerPaginacion,
 } from '../../lib/validacion.js';
 
@@ -75,5 +78,35 @@ router.patch('/categorias-globales/:id', async (req, res) => {
   const datos = esquemaActualizarCategoriaGlobal.parse(req.body);
   res.json(await adminCatalogo.actualizarCategoriaGlobal({ id, datos }));
 });
+
+router.post(
+  '/locales/:id/pagos-deuda',
+  idempotenciaRequerida,
+  async (req, res) => {
+    const localId = esquemaIdPositivo.parse(req.params.id);
+    const datos = esquemaRegistrarPagoDeuda.parse(req.body);
+    const respuesta = await pagoDeuda.registrarPagoDeudaAdmin({
+      admin: req.usuario,
+      localId,
+      datos,
+      idempotenciaId: res.locals.idempotenciaId,
+    });
+    res.status(201).json(respuesta);
+  },
+);
+
+router.post(
+  '/pagos-deuda/:id/confirmar',
+  idempotenciaRequerida,
+  async (req, res) => {
+    const id = esquemaIdPositivo.parse(req.params.id);
+    const respuesta = await pagoDeuda.confirmarPagoDeuda({
+      admin: req.usuario,
+      id,
+      idempotenciaId: res.locals.idempotenciaId,
+    });
+    res.json(respuesta);
+  },
+);
 
 export default router;

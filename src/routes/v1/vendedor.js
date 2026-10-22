@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import * as subPedidos from '../../services/subPedidos.js';
 import * as vendedorCatalogo from '../../services/vendedorCatalogo.js';
+import * as pagoDeuda from '../../services/pagoDeuda.js';
 import { requiereRol } from '../../middlewares/sesion.js';
+import { idempotenciaRequerida } from '../../middlewares/idempotencia.js';
 import {
   esquemaActualizarLocal,
   esquemaActualizarProducto,
@@ -12,9 +14,11 @@ import {
   esquemaCrearProducto,
   esquemaCrearSubcategoria,
   esquemaCrearVariante,
+  esquemaFiltrosPagosDeuda,
   esquemaFiltrosProductos,
   esquemaIdPositivo,
   esquemaListaSubPedidos,
+  esquemaReportarPagoDeuda,
   leerPaginacion,
 } from '../../lib/validacion.js';
 
@@ -206,5 +210,30 @@ router.patch(
     );
   },
 );
+
+router.get('/deuda/pagos', async (req, res) => {
+  const filtros = esquemaFiltrosPagosDeuda.parse(req.query);
+  const { pagina, porPagina } = leerPaginacion(req.query);
+
+  res.json(
+    await pagoDeuda.listarPagosDeudaVendedor({
+      usuario: req.usuario,
+      localId: filtros.local_id,
+      estado: filtros.estado,
+      pagina,
+      porPagina,
+    }),
+  );
+});
+
+router.post('/deuda/pagos', idempotenciaRequerida, async (req, res) => {
+  const datos = esquemaReportarPagoDeuda.parse(req.body);
+  const respuesta = await pagoDeuda.reportarPagoDeuda({
+    usuario: req.usuario,
+    datos,
+    idempotenciaId: res.locals.idempotenciaId,
+  });
+  res.status(201).json(respuesta);
+});
 
 export default router;

@@ -717,7 +717,8 @@ paths:
       summary: Ver el carrito del usuario
       description: |
         Si el usuario todavía no tiene carrito, devuelve uno vacío. No crea
-        filas en la base al leer.
+        filas en la base al leer. Cada ítem incluye el local al que pertenece,
+        los atributos de su variante y la primera foto del producto.
       operationId: verCarrito
       security:
         - cookieSesion: []
@@ -2392,7 +2393,18 @@ components:
 
     CarritoItem:
       type: object
-      required: [variante_id, cantidad, precio_unitario, subtotal, disponible]
+      required:
+        - variante_id
+        - cantidad
+        - local_id
+        - nombre_local
+        - producto_id
+        - nombre_producto
+        - atributos
+        - foto_principal
+        - precio_unitario
+        - subtotal
+        - disponible
       properties:
         id:
           type: integer
@@ -2400,6 +2412,11 @@ components:
           type: integer
         cantidad:
           type: integer
+        local_id:
+          type: integer
+          description: Local que vende el producto.
+        nombre_local:
+          type: string
         producto_id:
           type: integer
         nombre_producto:
@@ -2408,6 +2425,11 @@ components:
           type: object
           additionalProperties: true
           nullable: true
+          description: Atributos de la variante elegida.
+        foto_principal:
+          type: string
+          nullable: true
+          description: Primera foto del producto, o null si no tiene fotos.
         precio_unitario:
           type: integer
         subtotal:

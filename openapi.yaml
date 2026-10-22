@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Centro Comercial Virtual - API
-  version: 0.4.1
+  version: 0.5.0
   description: |
     Contrato de la API del backend. Es la fuente de verdad: las rutas se
     implementan después de quedar documentadas aquí.
@@ -18,6 +18,10 @@ info:
     pedido mínimo por local. El proveedor de pagos corre en modo `fake` hasta
     que existan las llaves de sandbox.
 
+    Etapa 3c: autenticación y CSRF documentados, carrito con local y foto
+    principal, y cuenta del comprador (perfil, cambio de contraseña y reenvío
+    de la verificación del correo).
+
     CORS: el backend solo responde con credenciales al origen configurado en
     `CORS_ORIGINS`. Las coordenadas de las direcciones llegan desde el
     frontend; el backend valida el rango de Colombia y no geocodifica.
@@ -28,6 +32,7 @@ servers:
 
 tags:
   - name: Autenticación
+  - name: Cuenta
   - name: Catálogo
   - name: Carrito
   - name: Direcciones
@@ -253,6 +258,109 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RestablecimientoResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/perfil:
+    patch:
+      tags: [Cuenta]
+      summary: Editar el nombre y el teléfono de la cuenta
+      description: |
+        Solo modifica los campos enviados. El correo no se puede cambiar por
+        esta ruta. `telefono: null` borra el teléfono guardado.
+      operationId: actualizarPerfil
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActualizarPerfilRequest'
+      responses:
+        '200':
+          description: Perfil actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerfilResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/cambiar-contrasena:
+    post:
+      tags: [Cuenta]
+      summary: Cambiar la contraseña conociendo la actual
+      description: |
+        Exige la contraseña actual. Inutiliza los enlaces de restablecimiento
+        pendientes. La sesión abierta sigue siendo válida hasta que expira.
+      operationId: cambiarContrasena
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CambiarContrasenaRequest'
+      responses:
+        '200':
+          description: Contraseña cambiada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CambioContrasenaResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          description: Sin sesión o contraseña actual incorrecta
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/reenviar-verificacion:
+    post:
+      tags: [Cuenta]
+      summary: Reenviar el correo de verificación
+      description: |
+        Responde lo mismo exista o no la cuenta y esté o no verificada, para
+        no revelar correos. Solo envía un correo nuevo si la cuenta existe,
+        está activa y todavía no está verificada. El enlace anterior deja de
+        servir. Limitado a 3 solicitudes por hora por conexión.
+      operationId: reenviarVerificacion
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReenviarVerificacionRequest'
+      responses:
+        '200':
+          description: Solicitud recibida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolicitudRestablecimientoResponse'
         '400':
           $ref: '#/components/responses/Error'
         '403':
@@ -1771,6 +1879,61 @@ components:
           type: string
         restablecida:
           type: boolean
+
+    ActualizarPerfilRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 2
+          maxLength: 120
+        telefono:
+          type: string
+          nullable: true
+          pattern: '^\+?[0-9]{7,15}$'
+          description: |
+            Solo dígitos, con `+` opcional al inicio. Se guarda tal como llega,
+            sin espacios ni guiones.
+
+    PerfilResponse:
+      type: object
+      required: [mensaje, usuario]
+      properties:
+        mensaje:
+          type: string
+        usuario:
+          $ref: '#/components/schemas/UsuarioCuenta'
+
+    CambiarContrasenaRequest:
+      type: object
+      required: [contrasena_actual, contrasena_nueva]
+      additionalProperties: false
+      properties:
+        contrasena_actual:
+          type: string
+          minLength: 1
+        contrasena_nueva:
+          $ref: '#/components/schemas/Contrasena'
+
+    CambioContrasenaResponse:
+      type: object
+      required: [mensaje, actualizada]
+      properties:
+        mensaje:
+          type: string
+        actualizada:
+          type: boolean
+
+    ReenviarVerificacionRequest:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
 
     Paginacion:
       type: object

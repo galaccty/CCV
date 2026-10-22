@@ -415,6 +415,11 @@ Pago de la deuda:
   - si fue efectivo y no se entregó, no hay deuda de comisión;
   - se actualiza el pedido derivado y se audita.
 - La cancelación es idempotente por transición de estado condicionada.
+- **Requisito para la 4f:** toda cancelación de un pedido en efectivo que ya
+  fue aceptado (`preparando` o `enviado`) debe quedar en `auditoria_admin` con
+  el motivo, el actor y el estado anterior, y debe existir un listado de admin
+  para revisarlas. Es el punto donde se puede fugar la comisión del efectivo:
+  el vendedor ya aceptó el pedido y no debe poder cancelarlo sin dejar rastro.
 
 ### 4.8 Jobs
 
@@ -612,6 +617,11 @@ Cada sub-etapa termina con OpenAPI actualizado, migración nueva, pruebas, `npm 
 ### 4f — Cancelaciones, jobs y paneles de cierre
 
 - Cancelación 4.10 con devolución de stock y reembolso.
+- **Auditoría de cancelaciones de efectivo aceptado:** las cancelaciones de
+  pedidos en efectivo que ya pasaron por aceptación (`preparando` o `enviado`)
+  se registran en `auditoria_admin` con motivo, actor y estado anterior. El
+  panel de admin debe tener un listado para revisarlas. Es la fuga de comisión
+  del efectivo y por eso no puede ser una cancelación silenciosa.
 - Jobs como scripts `npm run job:...`: auto-entrega, expiración digital, conciliación, integridad, bloqueo diario; todos con advisory lock.
 - Panel admin de configuración, conciliación y alertas.
 - Pruebas de invariante 11 (retención), 4.13 completo y jobs (incluido que dos ejecuciones simultáneas no duplican).

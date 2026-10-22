@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Centro Comercial Virtual - API
-  version: 0.5.0
+  version: 0.6.0
   description: |
     Contrato de la API del backend. Es la fuente de verdad: las rutas se
     implementan después de quedar documentadas aquí.
@@ -39,6 +39,7 @@ tags:
   - name: Pedidos
   - name: Pagos
   - name: Sub-pedidos
+  - name: Disputas
   - name: Vendedor
   - name: Admin
 
@@ -1865,6 +1866,304 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/v1/sub-pedidos/{id}/disputas:
+    post:
+      tags: [Disputas]
+      summary: Abrir una disputa sobre un sub-pedido
+      description: |
+        Solo el comprador dueno del pedido puede abrirla. El sub-pedido debe
+        estar `enviado` o `entregado`, con `saldo_liberado_en` nulo. En la
+        misma transaccion el sub-pedido pasa a `en_disputa` y se guarda su
+        estado anterior.
+
+        El comprador manda `detalle_id` y `cantidad`; el backend calcula
+        `monto_reclamado` con `detalle_producto.precio_unitario`. Cualquier
+        monto que intente mandar el cliente se descarta. La evidencia inicial
+        es opcional.
+      operationId: abrirDisputa
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdSubPedido'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AbrirDisputaRequest'
+      responses:
+        '201':
+          description: Disputa abierta
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Disputa'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          description: El sub-pedido no existe o no pertenece al comprador
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Ya existe una disputa, el sub-pedido no es disputable o el saldo ya fue liberado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Una linea no pertenece al sub-pedido o la cantidad excede la comprada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/disputas:
+    get:
+      tags: [Disputas]
+      summary: Listar las disputas del comprador autenticado
+      description: Solo devuelve disputas de pedidos propios.
+      operationId: listarDisputasComprador
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoDisputa'
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Disputas paginadas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaDisputas'
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/disputas/{id}:
+    get:
+      tags: [Disputas]
+      summary: Ver el detalle de una disputa y su evidencia
+      description: |
+        Puede verla el comprador dueno del pedido, el vendedor dueno del local
+        o un admin. Cualquier otro usuario recibe 404.
+      operationId: obtenerDisputa
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdDisputa'
+      responses:
+        '200':
+          description: Disputa con evidencia
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Disputa'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/disputas/{id}/evidencia:
+    post:
+      tags: [Disputas]
+      summary: Agregar evidencia a una disputa abierta
+      description: |
+        El comprador dueno, el vendedor del local o un admin pueden agregar
+        evidencia mientras la disputa este `abierta`. La evidencia es texto no
+        vacio o una URL que empiece por `https://`. No se aceptan archivos
+        binarios en esta etapa.
+      operationId: agregarEvidenciaDisputa
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdDisputa'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvidenciaRequest'
+      responses:
+        '201':
+          description: Evidencia agregada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisputaEvidencia'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: La disputa ya esta resuelta
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/vendedor/disputas:
+    get:
+      tags: [Disputas]
+      summary: Listar las disputas de los locales del vendedor
+      operationId: listarDisputasVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoDisputa'
+        - name: local_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Disputas paginadas de los locales propios
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaDisputas'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/disputas/{id}/evidencia:
+    post:
+      tags: [Disputas]
+      summary: Agregar evidencia como vendedor
+      description: Exige que el local del sub-pedido pertenezca al vendedor.
+      operationId: agregarEvidenciaVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdDisputa'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvidenciaRequest'
+      responses:
+        '201':
+          description: Evidencia agregada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisputaEvidencia'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: La disputa ya esta resuelta
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/admin/disputas:
+    get:
+      tags: [Disputas]
+      summary: Listar todas las disputas
+      operationId: listarDisputasAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoDisputa'
+        - name: local_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Disputas paginadas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaDisputas'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/disputas/{id}:
+    get:
+      tags: [Disputas]
+      summary: Ver el detalle de una disputa como admin
+      operationId: obtenerDisputaAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdDisputa'
+      responses:
+        '200':
+          description: Disputa con evidencia
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Disputa'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/disputas/{id}/evidencia:
+    post:
+      tags: [Disputas]
+      summary: Agregar evidencia como admin
+      description: La evidencia queda registrada con `lado = admin`.
+      operationId: agregarEvidenciaAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdDisputa'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvidenciaRequest'
+      responses:
+        '201':
+          description: Evidencia agregada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisputaEvidencia'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: La disputa ya esta resuelta
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
 components:
   securitySchemes:
     cookieSesion:
@@ -1916,6 +2215,13 @@ components:
       name: id
       in: path
       required: true
+      schema:
+        type: integer
+    IdDisputa:
+      name: id
+      in: path
+      required: true
+      description: Identificador de la disputa.
       schema:
         type: integer
     IdLocal:
@@ -3339,6 +3645,10 @@ components:
           type: integer
           nullable: true
           description: Presente en los movimientos `cobro_deuda` y sus reversas.
+        disputa_id:
+          type: integer
+          nullable: true
+          description: Presente en `congelacion` y `descongelacion` de una disputa.
         tipo:
           type: string
           enum:
@@ -3479,6 +3789,161 @@ components:
           type: string
           maxLength: 2000
           nullable: true
+
+    EstadoDisputa:
+      type: string
+      enum: [abierta, resuelta_comprador, resuelta_vendedor]
+
+    TipoDisputa:
+      type: string
+      enum: [digital, efectivo]
+
+    LadoEvidencia:
+      type: string
+      enum: [comprador, vendedor, admin]
+
+    TipoEvidencia:
+      type: string
+      enum: [texto, url]
+
+    LineaReclamadaRequest:
+      type: object
+      required: [detalle_id, cantidad]
+      additionalProperties: false
+      properties:
+        detalle_id:
+          type: integer
+          minimum: 1
+          description: Linea de `detalle_producto` del mismo sub-pedido.
+        cantidad:
+          type: integer
+          minimum: 1
+          maximum: 999
+
+    EvidenciaRequest:
+      type: object
+      required: [tipo, contenido]
+      additionalProperties: false
+      properties:
+        tipo:
+          $ref: '#/components/schemas/TipoEvidencia'
+        contenido:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: |
+            Texto no vacio. Si `tipo = url`, debe ser una URL absoluta que
+            empiece por `https://`.
+
+    AbrirDisputaRequest:
+      type: object
+      required: [motivo, lineas]
+      additionalProperties: false
+      properties:
+        motivo:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        lineas:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/LineaReclamadaRequest'
+        evidencia_inicial:
+          $ref: '#/components/schemas/EvidenciaRequest'
+
+    DisputaEvidencia:
+      type: object
+      required: [id, disputa_id, usuario_id, lado, tipo, contenido, creado_en]
+      properties:
+        id:
+          type: integer
+        disputa_id:
+          type: integer
+        usuario_id:
+          type: integer
+        lado:
+          $ref: '#/components/schemas/LadoEvidencia'
+        tipo:
+          $ref: '#/components/schemas/TipoEvidencia'
+        contenido:
+          type: string
+        creado_en:
+          type: string
+          format: date-time
+
+    Disputa:
+      type: object
+      required:
+        - id
+        - sub_pedido_id
+        - pedido_id
+        - local_id
+        - usuario_id
+        - tipo
+        - motivo
+        - estado
+        - monto_reclamado
+        - monto_congelado
+        - fecha_apertura
+        - estado_sub_pedido_anterior
+      properties:
+        id:
+          type: integer
+        sub_pedido_id:
+          type: integer
+        pedido_id:
+          type: integer
+        local_id:
+          type: integer
+        usuario_id:
+          type: integer
+          description: Comprador que abrio la disputa.
+        tipo:
+          $ref: '#/components/schemas/TipoDisputa'
+        motivo:
+          type: string
+        estado:
+          $ref: '#/components/schemas/EstadoDisputa'
+        monto_reclamado:
+          type: integer
+          description: Calculado por el backend con los precios congelados.
+        monto_congelado:
+          type: integer
+          description: Cero en esta mitad; la congelacion llega en 4c-2.
+        fecha_apertura:
+          type: string
+          format: date-time
+        fecha_resolucion:
+          type: string
+          format: date-time
+          nullable: true
+        resuelto_por:
+          type: integer
+          nullable: true
+        resolucion:
+          type: string
+          nullable: true
+        estado_sub_pedido_anterior:
+          $ref: '#/components/schemas/EstadoSubPedido'
+        sub_pedido:
+          $ref: '#/components/schemas/SubPedido'
+        evidencias:
+          type: array
+          items:
+            $ref: '#/components/schemas/DisputaEvidencia'
+
+    ListaDisputas:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Disputa'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
 
     EventoWompi:
       type: object

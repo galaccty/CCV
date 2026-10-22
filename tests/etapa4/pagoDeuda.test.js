@@ -221,6 +221,77 @@ describe('reportar y confirmar un pago de deuda', () => {
   });
 });
 
+describe('protecciones del pago de deuda en la base', () => {
+  test('no se puede borrar un pago de deuda', CON_BASE, async () => {
+    const vendedor = await crearUsuarioDirecto({
+      nombre: 'Vendedor',
+      roles: ['vendedor'],
+    });
+    const { local } = await crearCatalogo({ vendedorId: vendedor.id });
+    await crearDeuda(local.id, 10000n);
+
+    const pago = await reportarPagoDeuda({
+      usuario: vendedor,
+      datos: {
+        local_id: local.id,
+        monto: 4000,
+        metodo: 'transferencia',
+        referencia: clave('borrar'),
+        comprobante_url: null,
+      },
+    });
+
+    await assert.rejects(
+      () => prisma.pagoDeuda.delete({ where: { id: pago.id } }),
+      /no se borran/,
+    );
+  });
+
+  test('los datos originales no se reescriben y un confirmado es terminal', CON_BASE, async () => {
+    const vendedor = await crearUsuarioDirecto({
+      nombre: 'Vendedor',
+      roles: ['vendedor'],
+    });
+    const admin = await crearUsuarioDirecto({
+      nombre: 'Admin',
+      roles: ['admin'],
+    });
+    const { local } = await crearCatalogo({ vendedorId: vendedor.id });
+    await crearDeuda(local.id, 10000n);
+
+    const pago = await reportarPagoDeuda({
+      usuario: vendedor,
+      datos: {
+        local_id: local.id,
+        monto: 4000,
+        metodo: 'transferencia',
+        referencia: clave('inmutable'),
+        comprobante_url: null,
+      },
+    });
+
+    await assert.rejects(
+      () =>
+        prisma.pagoDeuda.update({
+          where: { id: pago.id },
+          data: { monto: 1n },
+        }),
+      /no se modifican/,
+    );
+
+    await confirmarPagoDeuda({ admin, id: pago.id });
+
+    await assert.rejects(
+      () =>
+        prisma.pagoDeuda.update({
+          where: { id: pago.id },
+          data: { estado: 'pendiente' },
+        }),
+      /solo se confirma una vez/,
+    );
+  });
+});
+
 describe('concurrencia y idempotencia de pagos de deuda', () => {
   test('dos confirmaciones simultaneas cobran una sola vez', CON_BASE, async () => {
     const vendedor = await crearUsuarioDirecto({

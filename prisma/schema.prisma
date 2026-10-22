@@ -49,6 +49,8 @@ model Usuario {
   historialSubPedido HistorialEstadoSubPedido[]
   carrito            Carrito?
   direcciones        Direccion[]
+  pagosDeudaReportados PagoDeuda[] @relation("PagoDeudaReportado")
+  pagosDeudaConfirmados PagoDeuda[] @relation("PagoDeudaConfirmado")
 
   @@map("usuario")
 }
@@ -202,6 +204,7 @@ model Local {
   subPedidos    SubPedido[]
   cuenta        CuentaLocal?
   movimientos   Ledger[]
+  pagosDeuda    PagoDeuda[]
 
   @@index([usuarioId])
   @@index([rubroId])
@@ -516,26 +519,59 @@ model Reembolso {
 // ---------------------------------------------------------------------------
 
 model Ledger {
-  id          Int            @id @default(autoincrement())
-  localId     Int?           @map("local_id")
-  subPedidoId Int?           @map("sub_pedido_id")
-  pagoId      Int?           @map("pago_id")
-  reembolsoId Int?           @map("reembolso_id")
-  tipo        TipoMovimiento @map("tipo")
-  monto       BigInt
-  fecha       DateTime       @default(now()) @db.Timestamptz(3)
+  id            Int            @id @default(autoincrement())
+  localId       Int?           @map("local_id")
+  subPedidoId   Int?           @map("sub_pedido_id")
+  pagoId        Int?           @map("pago_id")
+  reembolsoId   Int?           @map("reembolso_id")
+  pagoDeudaId   Int?           @map("pago_deuda_id")
+  tipo          TipoMovimiento @map("tipo")
+  monto         BigInt
+  fecha         DateTime       @default(now()) @db.Timestamptz(3)
 
-  local     Local?     @relation(fields: [localId], references: [id], onDelete: Restrict)
-  subPedido SubPedido? @relation(fields: [subPedidoId], references: [id], onDelete: Restrict)
-  pago      Pago?      @relation(fields: [pagoId], references: [id], onDelete: Restrict)
-  reembolso Reembolso? @relation(fields: [reembolsoId], references: [id], onDelete: Restrict)
+  local      Local?      @relation(fields: [localId], references: [id], onDelete: Restrict)
+  subPedido  SubPedido?  @relation(fields: [subPedidoId], references: [id], onDelete: Restrict)
+  pago       Pago?       @relation(fields: [pagoId], references: [id], onDelete: Restrict)
+  reembolso  Reembolso?  @relation(fields: [reembolsoId], references: [id], onDelete: Restrict)
+  pagoDeuda  PagoDeuda?  @relation(fields: [pagoDeudaId], references: [id], onDelete: Restrict)
 
   // liquidacion_id llega en la Etapa 4, cuando exista la tabla liquidacion.
   @@index([localId, fecha])
   @@index([pagoId])
   @@index([subPedidoId])
   @@index([reembolsoId])
+  @@index([pagoDeudaId])
   @@map("ledger")
+}
+
+// ---------------------------------------------------------------------------
+// Pago de la deuda de comision (Etapa 4b)
+// ---------------------------------------------------------------------------
+
+model PagoDeuda {
+  id                Int              @id @default(autoincrement())
+  localId           Int              @map("local_id")
+  monto             BigInt
+  metodo            MetodoPagoDeuda
+  referencia        String           @unique @db.VarChar(255)
+  comprobanteUrl    String?          @map("comprobante_url") @db.Text
+  estado            EstadoPagoDeuda  @default(pendiente)
+  reportadoPor      Int?             @map("reportado_por")
+  confirmadoPor     Int?             @map("confirmado_por")
+  fechaReporte      DateTime         @default(now()) @map("fecha_reporte") @db.Timestamptz(3)
+  fechaConfirmacion DateTime?        @map("fecha_confirmacion") @db.Timestamptz(3)
+  motivoRechazo     String?          @map("motivo_rechazo") @db.Text
+
+  local        Local      @relation(fields: [localId], references: [id], onDelete: Restrict)
+  reportador   Usuario?   @relation("PagoDeudaReportado", fields: [reportadoPor], references: [id], onDelete: Restrict)
+  confirmador  Usuario?   @relation("PagoDeudaConfirmado", fields: [confirmadoPor], references: [id], onDelete: Restrict)
+  movimientos  Ledger[]
+
+  @@index([localId, fechaReporte])
+  @@index([estado])
+  @@index([reportadoPor])
+  @@index([confirmadoPor])
+  @@map("pago_deuda")
 }
 
 model CuentaLocal {
@@ -655,6 +691,22 @@ enum EstadoReembolso {
   fallido
 
   @@map("estado_reembolso")
+}
+
+enum MetodoPagoDeuda {
+  transferencia
+  efectivo
+  manual
+
+  @@map("metodo_pago_deuda")
+}
+
+enum EstadoPagoDeuda {
+  pendiente
+  confirmado
+  rechazado
+
+  @@map("estado_pago_deuda")
 }
 
 enum TipoMovimiento {

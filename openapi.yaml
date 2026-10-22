@@ -379,8 +379,10 @@ paths:
       description: |
         Valida stock (solo lo verifica, no lo descuenta), calcula todos los
         montos en el backend y congela la configuración en `config_snapshot`.
-        El pedido nace en `pendiente_pago`; no se descuenta stock hasta que el
-        pago se confirme.
+        Con un método digital el pedido nace en `pendiente_pago` y el stock se
+        descuenta cuando el pago se confirme. Con `efectivo` nace en
+        `en_proceso`, se crea un único pago pendiente con referencia
+        `CCV-EF-*` y el stock se descuenta al aceptar el sub-pedido.
       operationId: crearPedido
       security:
         - cookieSesion: []
@@ -587,11 +589,139 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
 
+  /api/v1/vendedor/cuenta:
+    get:
+      tags: [Vendedor]
+      summary: Ver la cuenta de un local del vendedor
+      description: |
+        Devuelve los saldos de `cuenta_local`, el estado del local y la fecha
+        límite de pago. El vendedor solo puede consultar locales propios.
+      operationId: obtenerCuentaVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocalQuery'
+      responses:
+        '200':
+          description: Cuenta del local
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CuentaLocalResumen'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/movimientos:
+    get:
+      tags: [Vendedor]
+      summary: Listar los movimientos del ledger de un local propio
+      operationId: listarMovimientosVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocalQuery'
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Movimientos paginados, del más reciente al más antiguo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaMovimientos'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/deuda/pagos:
+    get:
+      tags: [Vendedor]
+      summary: Historial de pagos de deuda reportados por el vendedor
+      description: |
+        Lista los pagos de deuda de los locales del vendedor autenticado. El
+        monto y el estado los decide el backend; el vendedor solo reporta.
+      operationId: listarPagosDeudaVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: local_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoPagoDeuda'
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Pagos de deuda paginados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaPagosDeuda'
+        '403':
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [Vendedor]
+      summary: Reportar un pago de la deuda de comisión
+      description: |
+        El vendedor reporta un pago con su referencia y comprobante. El pago
+        queda `pendiente` hasta que un admin lo confirme. Reportar no mueve el
+        ledger ni reduce la deuda.
+
+        El monto es el único dato monetario que envía el vendedor; no puede
+        superar la deuda actual del local. La referencia es única.
+      operationId: reportarPagoDeuda
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportarPagoDeudaRequest'
+      responses:
+        '201':
+          description: Pago reportado, pendiente de confirmación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagoDeuda'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: Referencia duplicada, deuda insuficiente o clave en proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+
   /api/v1/sub-pedidos/{id}/aceptar:
     post:
       tags: [Sub-pedidos]
       summary: Aceptar un sub-pedido (vendedor)
-      description: Transición `por_aceptar` -> `preparando`.
+      description: |
+        Transición `por_aceptar` -> `preparando`. En un pedido en efectivo,
+        dentro de la misma transacción se descuenta el stock de cada línea. Si
+        alguna no alcanza, el sub-pedido y el pedido se cancelan, el pago queda
+        `rechazado` y no se genera deuda de comisión. En un pedido digital el
+        stock ya se descontó al aprobarse el pago.
       operationId: aceptarSubPedido
       security:
         - cookieSesion: []
@@ -657,8 +787,12 @@ paths:
       summary: Confirmar la entrega
       description: |
         Transición `enviado` -> `entregado`. La puede confirmar el comprador o
-        el vendedor. Marcar entregado NO libera dinero: `saldo_liberado_en`
-        sigue nulo hasta el job de retención (Etapa 4).
+        el vendedor. En un pedido en efectivo, la misma transacción aprueba el
+        pago, registra `venta` y `comision` con `local_id` (la comisión pasa a
+        `saldo_deuda`) y recalcula el estado del local. En un pedido digital no
+        se genera deuda nueva. Marcar entregado NO libera el saldo retenido de
+        una venta digital: `saldo_liberado_en` sigue nulo hasta el job de
+        retención (Etapa 4d).
       operationId: entregarSubPedido
       security:
         - cookieSesion: []
@@ -1474,6 +1608,129 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/v1/admin/locales/{id}/cuenta:
+    get:
+      tags: [Admin]
+      summary: Ver la cuenta de cualquier local
+      operationId: obtenerCuentaAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocal'
+      responses:
+        '200':
+          description: Cuenta del local
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CuentaLocalResumen'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/locales/{id}/movimientos:
+    get:
+      tags: [Admin]
+      summary: Listar los movimientos del ledger de un local
+      operationId: listarMovimientosAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocal'
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Movimientos paginados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaMovimientos'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/locales/{id}/pagos-deuda:
+    post:
+      tags: [Admin]
+      summary: Registrar un pago de deuda ya recibido
+      description: |
+        Crea el pago directamente en estado `confirmado` y, en la misma
+        transacción, registra `cobro_deuda` y recalcula el estado del local.
+        El monto no puede superar la deuda actual.
+      operationId: registrarPagoDeudaAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocal'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrarPagoDeudaRequest'
+      responses:
+        '201':
+          description: Pago registrado y aplicado a la deuda
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagoDeuda'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: Deuda insuficiente, referencia duplicada o clave en proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/pagos-deuda/{id}/confirmar:
+    post:
+      tags: [Admin]
+      summary: Confirmar un pago de deuda reportado por el vendedor
+      description: |
+        Solo confirma un pago `pendiente`, una sola vez. En la misma
+        transacción registra `cobro_deuda` con `pago_deuda_id`, reduce la deuda
+        y recalcula el estado del local. Si el monto supera la deuda actual,
+        responde 409 y no cambia nada.
+      operationId: confirmarPagoDeudaAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdPagoDeuda'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Pago confirmado y aplicado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagoDeuda'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: El pago ya no está pendiente, la deuda no alcanza o la clave está en proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+
   /api/v1/admin/rubros:
     post:
       tags: [Admin]
@@ -1662,6 +1919,19 @@ components:
       schema:
         type: integer
     IdLocal:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    IdLocalQuery:
+      name: local_id
+      in: query
+      required: true
+      description: Local del vendedor autenticado.
+      schema:
+        type: integer
+    IdPagoDeuda:
       name: id
       in: path
       required: true
@@ -1989,8 +2259,12 @@ components:
           $ref: '#/components/schemas/DireccionEntrega'
         metodo_pago:
           type: string
-          enum: [tarjeta, pse, nequi]
-          description: El efectivo llega en la Etapa 4.
+          enum: [tarjeta, pse, nequi, efectivo]
+          description: >
+            Con `efectivo` se crea un pedido `en_proceso` y un pago pendiente
+            con referencia `CCV-EF-*`; el stock se descuenta al aceptar, no al
+            pagar. Con los métodos digitales el pedido nace `pendiente_pago` y
+            el stock se descuenta cuando Wompi confirma el pago.
         items:
           type: array
           minItems: 1
@@ -3008,6 +3282,203 @@ components:
               format: uri
               nullable: true
               description: URL del Web Checkout de Wompi.
+
+    CuentaLocalResumen:
+      type: object
+      required: [local_id, nombre, estado, saldo_deuda, saldo_por_pagar, saldo_congelado, puede_vender]
+      properties:
+        local_id:
+          type: integer
+        usuario_id:
+          type: integer
+          description: Dueño del local. Se incluye en la vista del admin.
+        nombre:
+          type: string
+        estado:
+          $ref: '#/components/schemas/EstadoLocal'
+        puede_vender:
+          type: boolean
+          description: Verdadero solo para `activo` y `en_plazo`.
+        saldo_deuda:
+          type: integer
+          description: Deuda de comisión, en pesos.
+        saldo_por_pagar:
+          type: integer
+          description: Saldo retenido disponible para liquidar, en pesos.
+        saldo_congelado:
+          type: integer
+          description: Saldo retenido por reembolsos o disputas, en pesos.
+        fecha_limite_pago:
+          type: string
+          format: date
+          nullable: true
+        actualizado_en:
+          type: string
+          format: date-time
+          nullable: true
+
+    MovimientoLedger:
+      type: object
+      required: [id, tipo, monto, fecha]
+      properties:
+        id:
+          type: integer
+        local_id:
+          type: integer
+          nullable: true
+        sub_pedido_id:
+          type: integer
+          nullable: true
+        pago_id:
+          type: integer
+          nullable: true
+        reembolso_id:
+          type: integer
+          nullable: true
+        pago_deuda_id:
+          type: integer
+          nullable: true
+          description: Presente en los movimientos `cobro_deuda` y sus reversas.
+        tipo:
+          type: string
+          enum:
+            - venta
+            - comision
+            - reversa_comision
+            - pago_recibido
+            - cobro_deuda
+            - pago_a_local
+            - reembolso
+            - ingreso_publicidad
+            - ajuste
+            - ajuste_redondeo
+            - liberacion
+            - congelacion
+            - descongelacion
+            - deuda_reembolso
+            - reversa_pago_a_local
+            - reversa_cobro_deuda
+        monto:
+          type: integer
+          description: Monto firmado del movimiento, en pesos.
+        fecha:
+          type: string
+          format: date-time
+
+    ListaMovimientos:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/MovimientoLedger'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
+
+    MetodoPagoDeuda:
+      type: string
+      enum: [transferencia, efectivo, manual]
+
+    EstadoPagoDeuda:
+      type: string
+      enum: [pendiente, confirmado, rechazado]
+
+    PagoDeuda:
+      type: object
+      required:
+        - id
+        - local_id
+        - monto
+        - metodo
+        - referencia
+        - estado
+        - fecha_reporte
+      properties:
+        id:
+          type: integer
+        local_id:
+          type: integer
+        monto:
+          type: integer
+        metodo:
+          $ref: '#/components/schemas/MetodoPagoDeuda'
+        referencia:
+          type: string
+        comprobante_url:
+          type: string
+          nullable: true
+        estado:
+          $ref: '#/components/schemas/EstadoPagoDeuda'
+        reportado_por:
+          type: integer
+          nullable: true
+        confirmado_por:
+          type: integer
+          nullable: true
+        fecha_reporte:
+          type: string
+          format: date-time
+        fecha_confirmacion:
+          type: string
+          format: date-time
+          nullable: true
+        motivo_rechazo:
+          type: string
+          nullable: true
+
+    ListaPagosDeuda:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/PagoDeuda'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
+
+    ReportarPagoDeudaRequest:
+      type: object
+      required: [local_id, monto, metodo, referencia]
+      additionalProperties: false
+      properties:
+        local_id:
+          type: integer
+        monto:
+          type: integer
+          minimum: 1
+        metodo:
+          $ref: '#/components/schemas/MetodoPagoDeuda'
+        referencia:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Referencia bancaria o número de recibo. Debe ser única.
+        comprobante_url:
+          type: string
+          maxLength: 2000
+          nullable: true
+
+    RegistrarPagoDeudaRequest:
+      type: object
+      required: [monto, metodo, referencia]
+      additionalProperties: false
+      properties:
+        monto:
+          type: integer
+          minimum: 1
+        metodo:
+          $ref: '#/components/schemas/MetodoPagoDeuda'
+        referencia:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Referencia bancaria o número de recibo. Debe ser única.
+        comprobante_url:
+          type: string
+          maxLength: 2000
+          nullable: true
 
     EventoWompi:
       type: object

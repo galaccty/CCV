@@ -370,3 +370,94 @@ export const esquemaFiltrosPagosDeuda = z.object({
   local_id: z.coerce.number().int().positive().optional(),
   estado: z.enum(ESTADOS_PAGO_DEUDA).optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Esquemas de validacion de la Etapa 4c-1 (disputas y evidencia)
+// ---------------------------------------------------------------------------
+
+export const ESTADOS_DISPUTA = [
+  'abierta',
+  'resuelta_comprador',
+  'resuelta_vendedor',
+];
+
+export const TIPOS_EVIDENCIA = ['texto', 'url'];
+
+const esquemaEvidencia = z
+  .object({
+    tipo: z.enum(TIPOS_EVIDENCIA),
+    contenido: z
+      .string()
+      .trim()
+      .min(1, 'La evidencia no puede estar vacia.')
+      .max(4000, 'La evidencia no puede superar 4000 caracteres.'),
+  })
+  .superRefine((datos, ctx) => {
+    if (datos.tipo !== 'url') return;
+
+    if (!datos.contenido.startsWith('https://')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['contenido'],
+        message: 'La URL de la evidencia debe empezar por https://.',
+      });
+      return;
+    }
+
+    try {
+      const url = new URL(datos.contenido);
+      if (url.protocol !== 'https:') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['contenido'],
+          message: 'La URL de la evidencia debe usar https.',
+        });
+      }
+    } catch {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['contenido'],
+        message: 'La URL de la evidencia no es valida.',
+      });
+    }
+  });
+
+export const esquemaAgregarEvidencia = esquemaEvidencia;
+
+export const esquemaAbrirDisputa = z
+  .object({
+    motivo: z
+      .string()
+      .trim()
+      .min(1, 'El motivo de la disputa es obligatorio.')
+      .max(2000),
+    lineas: z
+      .array(
+        z.object({
+          detalle_id: z.coerce.number().int().positive(),
+          cantidad: z.coerce.number().int().min(1).max(999),
+        }),
+      )
+      .min(1, 'La disputa necesita al menos una linea.')
+      .max(50, 'La disputa no puede tener mas de 50 lineas.'),
+    evidencia_inicial: esquemaEvidencia.optional(),
+  })
+  .superRefine((datos, ctx) => {
+    const vistos = new Set();
+
+    datos.lineas.forEach((linea, indice) => {
+      if (vistos.has(linea.detalle_id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['lineas', indice, 'detalle_id'],
+          message: 'No repitas la misma linea en la disputa.',
+        });
+      }
+      vistos.add(linea.detalle_id);
+    });
+  });
+
+export const esquemaFiltrosDisputas = z.object({
+  estado: z.enum(ESTADOS_DISPUTA).optional(),
+  local_id: z.coerce.number().int().positive().optional(),
+});

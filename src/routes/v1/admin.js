@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as adminCatalogo from '../../services/adminCatalogo.js';
 import * as pagoDeuda from '../../services/pagoDeuda.js';
 import * as cuentaLocal from '../../services/cuentaLocal.js';
+import * as disputas from '../../services/disputas.js';
 import { requiereRol } from '../../middlewares/sesion.js';
 import { idempotenciaRequerida } from '../../middlewares/idempotencia.js';
 import {
@@ -10,6 +11,8 @@ import {
   esquemaCambiarEstadoLocal,
   esquemaCrearCategoriaGlobal,
   esquemaCrearRubro,
+  esquemaAgregarEvidencia,
+  esquemaFiltrosDisputas,
   esquemaFiltrosLocales,
   esquemaIdPositivo,
   esquemaLocalQuery,
@@ -127,5 +130,42 @@ router.post(
     res.json(respuesta);
   },
 );
+
+// ---------------------------------------------------------------------------
+// Disputas (Etapa 4c-1)
+// ---------------------------------------------------------------------------
+
+router.get('/disputas', async (req, res) => {
+  const filtros = esquemaFiltrosDisputas.parse(req.query);
+  const { pagina, porPagina } = leerPaginacion(req.query);
+
+  res.json(
+    await disputas.listarDisputasAdmin({
+      estado: filtros.estado,
+      localId: filtros.local_id,
+      pagina,
+      porPagina,
+    }),
+  );
+});
+
+router.get('/disputas/:id', async (req, res) => {
+  const id = esquemaIdPositivo.parse(req.params.id);
+  res.json(await disputas.obtenerDisputa({ usuario: req.usuario, id }));
+});
+
+router.post('/disputas/:id/evidencia', async (req, res) => {
+  const disputaId = esquemaIdPositivo.parse(req.params.id);
+  const datos = esquemaAgregarEvidencia.parse(req.body);
+
+  res.status(201).json(
+    await disputas.agregarEvidencia({
+      usuario: req.usuario,
+      disputaId,
+      datos,
+      lado: 'admin',
+    }),
+  );
+});
 
 export default router;

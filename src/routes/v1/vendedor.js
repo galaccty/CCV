@@ -3,6 +3,7 @@ import * as subPedidos from '../../services/subPedidos.js';
 import * as vendedorCatalogo from '../../services/vendedorCatalogo.js';
 import * as pagoDeuda from '../../services/pagoDeuda.js';
 import * as cuentaLocal from '../../services/cuentaLocal.js';
+import * as disputas from '../../services/disputas.js';
 import { requiereRol } from '../../middlewares/sesion.js';
 import { idempotenciaRequerida } from '../../middlewares/idempotencia.js';
 import {
@@ -15,6 +16,8 @@ import {
   esquemaCrearProducto,
   esquemaCrearSubcategoria,
   esquemaCrearVariante,
+  esquemaAgregarEvidencia,
+  esquemaFiltrosDisputas,
   esquemaFiltrosPagosDeuda,
   esquemaFiltrosProductos,
   esquemaIdPositivo,
@@ -260,5 +263,42 @@ router.post('/deuda/pagos', idempotenciaRequerida, async (req, res) => {
   });
   res.status(201).json(respuesta);
 });
+
+// ---------------------------------------------------------------------------
+// Disputas (Etapa 4c-1)
+// ---------------------------------------------------------------------------
+
+router.get('/disputas', requiereRol('vendedor'), async (req, res) => {
+  const filtros = esquemaFiltrosDisputas.parse(req.query);
+  const { pagina, porPagina } = leerPaginacion(req.query);
+
+  res.json(
+    await disputas.listarDisputasVendedor({
+      usuario: req.usuario,
+      estado: filtros.estado,
+      localId: filtros.local_id,
+      pagina,
+      porPagina,
+    }),
+  );
+});
+
+router.post(
+  '/disputas/:id/evidencia',
+  requiereRol('vendedor'),
+  async (req, res) => {
+    const disputaId = esquemaIdPositivo.parse(req.params.id);
+    const datos = esquemaAgregarEvidencia.parse(req.body);
+
+    res.status(201).json(
+      await disputas.agregarEvidencia({
+        usuario: req.usuario,
+        disputaId,
+        datos,
+        lado: 'vendedor',
+      }),
+    );
+  },
+);
 
 export default router;

@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import * as subPedidos from '../../services/subPedidos.js';
+import * as disputas from '../../services/disputas.js';
 import { requiereSesion, requiereRol } from '../../middlewares/sesion.js';
 import {
+  esquemaAbrirDisputa,
   esquemaEnviarSubPedido,
   esquemaIdPositivo,
 } from '../../lib/validacion.js';
@@ -47,6 +49,19 @@ router.post(
 router.post('/:id/entregar', async (req, res) => {
   const id = esquemaIdPositivo.parse(req.params.id);
   res.json(await subPedidos.entregarSubPedido({ usuario: req.usuario, id }));
+});
+
+router.post('/:id/disputas', async (req, res) => {
+  const subPedidoId = esquemaIdPositivo.parse(req.params.id);
+  const datos = esquemaAbrirDisputa.parse(req.body);
+
+  res.status(201).json(
+    await disputas.abrirDisputa({
+      usuario: req.usuario,
+      subPedidoId,
+      datos,
+    }),
+  );
 });
 
 export default router;

@@ -360,7 +360,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SolicitudRestablecimientoResponse'
+                $ref: '#/components/schemas/SolicitudReenvioResponse'
         '400':
           $ref: '#/components/responses/Error'
         '403':
@@ -1755,7 +1755,6 @@ components:
     Contrasena:
       type: string
       minLength: 10
-      maxLength: 128
       description: |
         Debe tener al menos 10 caracteres, una minúscula, una mayúscula y un
         número. Las contraseñas nunca se guardan en texto plano.
@@ -1934,6 +1933,15 @@ components:
         email:
           type: string
           format: email
+
+    SolicitudReenvioResponse:
+      type: object
+      required: [mensaje, enviado]
+      properties:
+        mensaje:
+          type: string
+        enviado:
+          type: boolean
 
     Paginacion:
       type: object

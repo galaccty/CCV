@@ -74,3 +74,13 @@ export const limiteRegistro = crearLimitador({
   limite: 5,
   mensaje: 'Demasiadas cuentas creadas desde esta conexion.',
 });
+
+// Reenvio del correo de verificacion: evita que una misma conexion use la
+// ruta para llenar de correos la bandeja de una persona. Cada solicitud
+// invalida el enlace anterior, asi que tambien protege la rotacion de tokens.
+export const limiteReenvioVerificacion = crearLimitador({
+  nombre: 'reenvio-verificacion',
+  ventanaMs: 60 * 60 * 1000,
+  limite: 3,
+  mensaje: 'Demasiadas solicitudes de verificacion. Espera una hora.',
+});

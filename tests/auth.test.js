@@ -6,6 +6,7 @@ import {
   limpiarCorreos,
   ultimoCorreo,
   tokenDeCorreo,
+  correosEnviados,
   CONTRASENA_VALIDA,
 } from './helpers/entorno.js';
 import { opcionesConBase, cerrarConexion, prisma } from './helpers/base.js';
@@ -14,6 +15,7 @@ import {
   postSinCsrf,
   postConCsrfInvalido,
   crearUsuarioVerificado,
+  crearUsuarioConSesion,
   conCookieFabricada,
 } from './helpers/http.js';
 
@@ -415,6 +417,189 @@ describe('restablecimiento de contrasena', () => {
     const r = await cliente().post('/api/v1/auth/restablecer-contrasena', {
       token,
       contrasena: 'corta',
+    });
+
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error.codigo, 'validacion_invalida');
+  });
+});
+
+describe('cuenta del comprador', () => {
+  test('edita el nombre y el teléfono de la cuenta', CON_BASE, async () => {
+    const usuario = await crearUsuarioConSesion();
+
+    const r = await usuario.cliente.patch('/api/v1/auth/perfil', {
+      nombre: 'Ana Actualizada',
+      telefono: '+573001234567',
+    });
+
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.usuario.nombre, 'Ana Actualizada');
+    assert.equal(r.body.usuario.telefono, '+573001234567');
+
+    const yo = await usuario.cliente.get('/api/v1/auth/yo');
+    assert.equal(yo.status, 200);
+    assert.equal(yo.body.usuario.nombre, 'Ana Actualizada');
+    assert.equal(yo.body.usuario.telefono, '+573001234567');
+
+    const fila = await prisma.usuario.findUnique({ where: { id: usuario.id } });
+    assert.equal(fila.nombre, 'Ana Actualizada');
+    assert.equal(fila.telefono, '+573001234567');
+  });
+
+  test('permite borrar el teléfono con null', CON_BASE, async () => {
+    const usuario = await crearUsuarioConSesion();
+    await usuario.cliente.patch('/api/v1/auth/perfil', {
+      telefono: '+573001234567',
+    });
+
+    const r = await usuario.cliente.patch('/api/v1/auth/perfil', {
+      telefono: null,
+    });
+
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.usuario.telefono, null);
+  });
+
+  test('rechaza un teléfono con formato inválido', CON_BASE, async () => {
+    const usuario = await crearUsuarioConSesion();
+
+    for (const telefono of ['123', '300 123 4567', 'abc1234567']) {
+      const r = await usuario.cliente.patch('/api/v1/auth/perfil', { telefono });
+      assert.equal(r.status, 400, telefono);
+      assert.equal(r.body.error.codigo, 'validacion_invalida');
+    }
+  });
+
+  test('rechaza un perfil vacío y exige sesión', CON_BASE, async () => {
+    const sinSesion = await cliente().patch('/api/v1/auth/perfil', {
+      nombre: 'Sin Sesion',
+    });
+    assert.equal(sinSesion.status, 401);
+
+    const usuario = await crearUsuarioConSesion();
+    const vacio = await usuario.cliente.patch('/api/v1/auth/perfil', {});
+    assert.equal(vacio.status, 400);
+    assert.equal(vacio.body.error.codigo, 'validacion_invalida');
+  });
+
+  test('cambia la contraseña pidiendo la actual', CON_BASE, async () => {
+    const usuario = await crearUsuarioConSesion();
+    const nueva = 'NuevaContrasena456';
+
+    const cambio = await usuario.cliente.post('/api/v1/auth/cambiar-contrasena', {
+      contrasena_actual: usuario.contrasena,
+      contrasena_nueva: nueva,
+    });
+    assert.equal(cambio.status, 200, JSON.stringify(cambio.body));
+    assert.equal(cambio.body.actualizada, true);
+
+    const loginViejo = await cliente().post('/api/v1/auth/login', {
+      email: usuario.email,
+      contrasena: usuario.contrasena,
+    });
+    assert.equal(loginViejo.status, 401, 'la contraseña anterior deja de servir');
+
+    const loginNuevo = await cliente().post('/api/v1/auth/login', {
+      email: usuario.email,
+      contrasena: nueva,
+    });
+    assert.equal(loginNuevo.status, 200, 'la contraseña nueva sí sirve');
+  });
+
+  test('no cambia la contraseña si la actual no coincide', CON_BASE, async () => {
+    const usuario = await crearUsuarioConSesion();
+
+    const r = await usuario.cliente.post('/api/v1/auth/cambiar-contrasena', {
+      contrasena_actual: 'ContrasenaEquivocada9',
+      contrasena_nueva: 'NuevaContrasena456',
+    });
+
+    assert.equal(r.status, 401);
+    assert.equal(r.body.error.codigo, 'credenciales_invalidas');
+
+    const login = await cliente().post('/api/v1/auth/login', {
+      email: usuario.email,
+      contrasena: usuario.contrasena,
+    });
+    assert.equal(login.status, 200, 'la contraseña original sigue sirviendo');
+  });
+
+  test('rechaza una contraseña nueva débil o sin sesión', CON_BASE, async () => {
+    const sinSesion = await cliente().post('/api/v1/auth/cambiar-contrasena', {
+      contrasena_actual: 'lo-que-sea',
+      contrasena_nueva: 'NuevaContrasena456',
+    });
+    assert.equal(sinSesion.status, 401);
+
+    const usuario = await crearUsuarioConSesion();
+    const debil = await usuario.cliente.post('/api/v1/auth/cambiar-contrasena', {
+      contrasena_actual: usuario.contrasena,
+      contrasena_nueva: 'corta',
+    });
+    assert.equal(debil.status, 400);
+    assert.equal(debil.body.error.codigo, 'validacion_invalida');
+  });
+
+  test('reenvía la verificación e invalida el enlace anterior', CON_BASE, async () => {
+    limpiarCorreos();
+    const email = correoUnico('reenvio');
+    await cliente().post('/api/v1/auth/registro', {
+      nombre: 'Reenvio',
+      email,
+      contrasena: CONTRASENA_VALIDA,
+      acepto_terminos: true,
+    });
+
+    const tokenViejo = tokenDeCorreo(ultimoCorreo('Verifica tu correo'));
+    assert.ok(tokenViejo);
+
+    limpiarCorreos();
+    const r = await cliente().post('/api/v1/auth/reenviar-verificacion', { email });
+
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.enviado, true);
+    const reenviado = ultimoCorreo('Verifica tu correo');
+    assert.ok(reenviado, 'debe enviarse un correo nuevo');
+    assert.equal(reenviado.para, email);
+
+    const tokenNuevo = tokenDeCorreo(reenviado);
+    assert.notEqual(tokenNuevo, tokenViejo);
+
+    const viejo = await cliente().post('/api/v1/auth/verificar-email', {
+      token: tokenViejo,
+    });
+    assert.equal(viejo.status, 400, 'el enlace anterior deja de servir');
+
+    const nuevo = await cliente().post('/api/v1/auth/verificar-email', {
+      token: tokenNuevo,
+    });
+    assert.equal(nuevo.status, 200);
+    assert.equal(nuevo.body.verificado, true);
+  });
+
+  test('no revela si la cuenta existe o ya estaba verificada', CON_BASE, async () => {
+    const usuario = await crearUsuarioVerificado();
+    limpiarCorreos();
+
+    const verificado = await cliente().post('/api/v1/auth/reenviar-verificacion', {
+      email: usuario.email,
+    });
+    const noExiste = await cliente().post('/api/v1/auth/reenviar-verificacion', {
+      email: correoUnico('noexiste'),
+    });
+
+    assert.equal(verificado.status, 200);
+    assert.equal(noExiste.status, 200);
+    assert.equal(verificado.body.mensaje, noExiste.body.mensaje);
+    assert.equal(verificado.body.enviado, true);
+    assert.equal(noExiste.body.enviado, true);
+    assert.equal(correosEnviados.length, 0, 'no se envía correo si ya está verificada');
+  });
+
+  test('el reenvío valida el correo', CON_BASE, async () => {
+    const r = await cliente().post('/api/v1/auth/reenviar-verificacion', {
+      email: 'no-es-un-correo',
     });
 
     assert.equal(r.status, 400);

@@ -27,6 +27,7 @@ model Usuario {
   id              Int      @id @default(autoincrement())
   nombre          String   @db.VarChar(120)
   email           String   @unique @db.VarChar(255)
+  telefono        String?  @db.VarChar(30)
   emailVerificado Boolean  @default(false) @map("email_verificado")
   passwordHash    String   @map("password_hash") @db.VarChar(255)
   aceptoTerminos  Boolean  @map("acepto_terminos")

@@ -103,10 +103,18 @@ describe('limitador de peticiones', () => {
   });
 
   test('los limitadores de la aplicacion existen y son middleware', async () => {
-    const { limiteGeneral, limiteIntentos, limiteRegistro } = await import(
-      '../src/middlewares/rateLimit.js'
-    );
-    for (const l of [limiteGeneral, limiteIntentos, limiteRegistro]) {
+    const {
+      limiteGeneral,
+      limiteIntentos,
+      limiteRegistro,
+      limiteReenvioVerificacion,
+    } = await import('../src/middlewares/rateLimit.js');
+    for (const l of [
+      limiteGeneral,
+      limiteIntentos,
+      limiteRegistro,
+      limiteReenvioVerificacion,
+    ]) {
       assert.equal(typeof l, 'function', 'cada limitador debe ser un middleware');
     }
   });

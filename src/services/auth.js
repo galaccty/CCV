@@ -101,6 +101,21 @@ async function enviarCorreo({ para, asunto, texto, html, idReferencia }) {
   }
 }
 
+/**
+ * Forma publica de una cuenta. Nunca incluye el hash de la contrasena.
+ * `roles` puede venir como filas de Prisma ({ rol }) o como strings.
+ */
+export function serializarUsuario(usuario) {
+  return {
+    id: usuario.id,
+    nombre: usuario.nombre,
+    email: usuario.email,
+    email_verificado: usuario.emailVerificado,
+    telefono: usuario.telefono ?? null,
+    roles: (usuario.roles ?? []).map((r) => (typeof r === 'string' ? r : r.rol)),
+  };
+}
+
 async function crearToken(usuarioId, tipo, horasValidez) {
   const token = generarToken();
 
@@ -137,6 +152,33 @@ async function consumirToken(token, tipo) {
     throw errorValidacion('El enlace no es valido o ya expiro. Pide uno nuevo.');
   }
   return fila;
+}
+
+async function enviarCorreoVerificacion(usuario) {
+  const token = await crearToken(
+    usuario.id,
+    'verificar_email',
+    EXPIRACION_VERIFICACION_HORAS,
+  );
+  const enlace = `${urlBasePublica()}/verificar-email?token=${encodeURIComponent(token)}`;
+
+  await enviarCorreo({
+    para: usuario.email,
+    asunto: 'Verifica tu correo electronico',
+    idReferencia: `verificar_email:${usuario.id}`,
+    texto:
+      `Hola ${usuario.nombre}.\n\n` +
+      `Confirma tu correo con este enlace:\n${enlace}\n\n` +
+      `El enlace vence en ${EXPIRACION_VERIFICACION_HORAS} horas.\n` +
+      `Si tu no creaste esta cuenta, ignora este mensaje.`,
+    html: `
+      <p>Hola ${usuario.nombre},</p>
+      <p>Confirma tu correo con este enlace:</p>
+      <p><a href="${enlace}">Verificar mi correo</a></p>
+      <p>El enlace vence en ${EXPIRACION_VERIFICACION_HORAS} horas.</p>
+      <p>Si tu no creaste esta cuenta, ignora este mensaje.</p>
+    `,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -186,29 +228,17 @@ export async function registrarUsuario({
       fechaAceptacion: new Date(),
       roles: { create: rolesLimpios.map((rol) => ({ rol })) },
     },
-    select: { id: true, nombre: true, email: true, emailVerificado: true, roles: true },
+    select: {
+      id: true,
+      nombre: true,
+      email: true,
+      telefono: true,
+      emailVerificado: true,
+      roles: true,
+    },
   });
 
-  const token = await crearToken(usuario.id, 'verificar_email', EXPIRACION_VERIFICACION_HORAS);
-  const enlace = `${urlBasePublica()}/verificar-email?token=${encodeURIComponent(token)}`;
-
-  await enviarCorreo({
-    para: usuario.email,
-    asunto: 'Verifica tu correo electronico',
-    idReferencia: `verificar_email:${usuario.id}`,
-    texto:
-      `Hola ${usuario.nombre}.\n\n` +
-      `Confirma tu correo con este enlace:\n${enlace}\n\n` +
-      `El enlace vence en ${EXPIRACION_VERIFICACION_HORAS} horas.\n` +
-      `Si tu no creaste esta cuenta, ignora este mensaje.`,
-    html: `
-      <p>Hola ${usuario.nombre},</p>
-      <p>Confirma tu correo con este enlace:</p>
-      <p><a href="${enlace}">Verificar mi correo</a></p>
-      <p>El enlace vence en ${EXPIRACION_VERIFICACION_HORAS} horas.</p>
-      <p>Si tu no creaste esta cuenta, ignora este mensaje.</p>
-    `,
-  });
+  await enviarCorreoVerificacion(usuario);
 
   logger.info({ usuarioId: usuario.id, roles: rolesLimpios }, 'usuario registrado');
   return usuario;
@@ -251,12 +281,7 @@ export async function iniciarSesion({ email, contrasena }) {
 
   return {
     token: crearTokenSesion(usuario.id),
-    usuario: {
-      id: usuario.id,
-      nombre: usuario.nombre,
-      email: usuario.email,
-      roles: usuario.roles.map((r) => r.rol),
-    },
+    usuario: serializarUsuario(usuario),
   };
 }
 
@@ -275,6 +300,7 @@ export async function usuarioDesdeToken(token) {
     id: usuario.id,
     nombre: usuario.nombre,
     email: usuario.email,
+    telefono: usuario.telefono,
     emailVerificado: usuario.emailVerificado,
     roles: usuario.roles.map((r) => r.rol),
   };
@@ -364,6 +390,94 @@ export async function restablecerContrasena({ token, contrasena }) {
 
   logger.info({ usuarioId: fila.usuarioId }, 'contrasena restablecida');
   return { restablecida: true };
+}
+
+// ---------------------------------------------------------------------------
+// Cuenta del comprador
+// ---------------------------------------------------------------------------
+
+export async function actualizarPerfil({ usuarioId, nombre, telefono }) {
+  const actualizado = await prisma.usuario.update({
+    where: { id: usuarioId },
+    data: {
+      ...(nombre !== undefined ? { nombre } : {}),
+      ...(telefono !== undefined ? { telefono } : {}),
+    },
+    select: {
+      id: true,
+      nombre: true,
+      email: true,
+      telefono: true,
+      emailVerificado: true,
+      roles: true,
+    },
+  });
+
+  logger.info({ usuarioId }, 'perfil actualizado');
+  return serializarUsuario(actualizado);
+}
+
+export async function cambiarContrasena({
+  usuarioId,
+  contrasenaActual,
+  contrasenaNueva,
+}) {
+  const problemas = cumplePoliticaContrasena(contrasenaNueva ?? '');
+  if (problemas.length > 0) {
+    throw errorValidacion('La contrasena es muy debil.', {
+      campo: 'contrasena_nueva',
+      requisitos: problemas,
+    });
+  }
+
+  const usuario = await prisma.usuario.findUnique({ where: { id: usuarioId } });
+  const actualCorrecta = await verificarContrasena(
+    contrasenaActual ?? '',
+    usuario?.passwordHash ?? null,
+  );
+
+  if (!usuario || !usuario.activo || !actualCorrecta) {
+    logger.warn({ usuarioId }, 'cambio de contrasena rechazado');
+    throw errorCredenciales('La contrasena actual no es correcta.');
+  }
+
+  const passwordHash = await hashearContrasena(contrasenaNueva);
+
+  await prisma.$transaction([
+    prisma.usuario.update({
+      where: { id: usuarioId },
+      data: { passwordHash },
+    }),
+    // Un enlace de restablecimiento pendiente deja de servir: el usuario ya
+    // demostro que conoce la contrasena actual.
+    prisma.tokenVerificacion.updateMany({
+      where: { usuarioId, tipo: 'reset_password', usado: false },
+      data: { usado: true },
+    }),
+  ]);
+
+  logger.info({ usuarioId }, 'contrasena cambiada');
+  return { actualizada: true };
+}
+
+export async function reenviarVerificacion({ email }) {
+  const correoNormalizado = String(email ?? '').trim().toLowerCase();
+  const usuario = await prisma.usuario.findUnique({
+    where: { email: correoNormalizado },
+  });
+
+  // Respuesta identica exista o no la cuenta y este o no verificada.
+  if (!usuario || !usuario.activo || usuario.emailVerificado) {
+    logger.warn(
+      { email: correoNormalizado },
+      'reenvio de verificacion pedido para una cuenta que no lo necesita',
+    );
+    return { enviado: true };
+  }
+
+  await enviarCorreoVerificacion(usuario);
+  logger.info({ usuarioId: usuario.id }, 'verificacion de correo reenviada');
+  return { enviado: true };
 }
 
 // ---------------------------------------------------------------------------

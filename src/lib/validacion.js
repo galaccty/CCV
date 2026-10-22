@@ -76,6 +76,32 @@ export const esquemaVerificarEmail = z.object({
   token: z.string().min(10, 'El token es obligatorio.'),
 });
 
+export const esquemaReenviarVerificacion = z.object({
+  email: z.string().trim().toLowerCase().email('El correo no es valido.'),
+});
+
+const esquemaTelefono = z
+  .string()
+  .trim()
+  .regex(
+    /^\+?[0-9]{7,15}$/,
+    'El telefono debe tener entre 7 y 15 digitos, con + opcional al inicio.',
+  );
+
+export const esquemaActualizarPerfil = z
+  .object({
+    nombre: z.string().trim().min(2, 'El nombre es obligatorio.').max(120).optional(),
+    telefono: esquemaTelefono.nullable().optional(),
+  })
+  .refine((datos) => Object.keys(datos).length > 0, {
+    message: 'Envia al menos un campo para actualizar.',
+  });
+
+export const esquemaCambiarContrasena = z.object({
+  contrasena_actual: z.string().min(1, 'La contrasena actual es obligatoria.'),
+  contrasena_nueva: z.string().min(1, 'La contrasena nueva es obligatoria.'),
+});
+
 // ---------------------------------------------------------------------------
 // Esquemas de validacion de la Etapa 2
 // ---------------------------------------------------------------------------

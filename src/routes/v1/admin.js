@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as adminCatalogo from '../../services/adminCatalogo.js';
 import * as pagoDeuda from '../../services/pagoDeuda.js';
+import * as cuentaLocal from '../../services/cuentaLocal.js';
 import { requiereRol } from '../../middlewares/sesion.js';
 import { idempotenciaRequerida } from '../../middlewares/idempotencia.js';
 import {
@@ -11,6 +12,7 @@ import {
   esquemaCrearRubro,
   esquemaFiltrosLocales,
   esquemaIdPositivo,
+  esquemaLocalQuery,
   esquemaRegistrarPagoDeuda,
   leerPaginacion,
 } from '../../lib/validacion.js';
@@ -77,6 +79,23 @@ router.patch('/categorias-globales/:id', async (req, res) => {
   const id = esquemaIdPositivo.parse(req.params.id);
   const datos = esquemaActualizarCategoriaGlobal.parse(req.body);
   res.json(await adminCatalogo.actualizarCategoriaGlobal({ id, datos }));
+});
+
+router.get('/locales/:id/cuenta', async (req, res) => {
+  const localId = esquemaIdPositivo.parse(req.params.id);
+  res.json(await cuentaLocal.obtenerCuentaAdmin({ localId }));
+});
+
+router.get('/locales/:id/movimientos', async (req, res) => {
+  const localId = esquemaIdPositivo.parse(req.params.id);
+  const { pagina, porPagina } = leerPaginacion(req.query);
+  res.json(
+    await cuentaLocal.listarMovimientosAdmin({
+      localId,
+      pagina,
+      porPagina,
+    }),
+  );
 });
 
 router.post(

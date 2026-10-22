@@ -328,6 +328,10 @@ export const esquemaFiltrosCategorias = z.object({
   padre_id: z.coerce.number().int().positive().nullable().optional(),
 });
 
+export const esquemaLocalQuery = z.object({
+  local_id: z.coerce.number().int().positive(),
+});
+
 export const METODOS_PAGO_DEUDA = ['transferencia', 'efectivo', 'manual'];
 export const ESTADOS_PAGO_DEUDA = ['pendiente', 'confirmado', 'rechazado'];
 

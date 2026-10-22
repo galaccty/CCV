@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as subPedidos from '../../services/subPedidos.js';
 import * as vendedorCatalogo from '../../services/vendedorCatalogo.js';
 import * as pagoDeuda from '../../services/pagoDeuda.js';
+import * as cuentaLocal from '../../services/cuentaLocal.js';
 import { requiereRol } from '../../middlewares/sesion.js';
 import { idempotenciaRequerida } from '../../middlewares/idempotencia.js';
 import {
@@ -18,6 +19,7 @@ import {
   esquemaFiltrosProductos,
   esquemaIdPositivo,
   esquemaListaSubPedidos,
+  esquemaLocalQuery,
   esquemaReportarPagoDeuda,
   leerPaginacion,
 } from '../../lib/validacion.js';
@@ -210,6 +212,29 @@ router.patch(
     );
   },
 );
+
+router.get('/cuenta', requiereRol('vendedor'), async (req, res) => {
+  const { local_id: localId } = esquemaLocalQuery.parse(req.query);
+  res.json(
+    await cuentaLocal.obtenerCuentaVendedor({
+      usuario: req.usuario,
+      localId,
+    }),
+  );
+});
+
+router.get('/movimientos', requiereRol('vendedor'), async (req, res) => {
+  const { local_id: localId } = esquemaLocalQuery.parse(req.query);
+  const { pagina, porPagina } = leerPaginacion(req.query);
+  res.json(
+    await cuentaLocal.listarMovimientosVendedor({
+      usuario: req.usuario,
+      localId,
+      pagina,
+      porPagina,
+    }),
+  );
+});
 
 router.get('/deuda/pagos', async (req, res) => {
   const filtros = esquemaFiltrosPagosDeuda.parse(req.query);

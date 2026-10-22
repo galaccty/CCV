@@ -664,6 +664,12 @@ enum TipoMovimiento {
   ingreso_publicidad
   ajuste
   ajuste_redondeo
+  liberacion
+  congelacion
+  descongelacion
+  deuda_reembolso
+  reversa_pago_a_local
+  reversa_cobro_deuda
 
   @@map("tipo_movimiento")
 }

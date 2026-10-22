@@ -67,9 +67,11 @@ Además, se ajustan los efectos de tipos existentes:
 
 Columnas nuevas en `ledger`:
 
-- `disputa_id` (nullable, FK a `disputa`).
-- `pago_deuda_id` (nullable, FK a `pago_deuda`).
+- `disputa_id` (nullable, FK a `disputa`). **Diferida a la 4c**, cuando se cree la tabla `disputa`, junto con su UNIQUE parcial. En la 4a no se crea.
+- `pago_deuda_id` (nullable, FK a `pago_deuda`). **Diferida a la 4b**, cuando se cree la tabla `pago_deuda`, junto con su UNIQUE parcial. En la 4a no se crea.
 - `liquidacion_id` **no** se agrega al ledger: el ledger es inmutable y una liquidación se crea después. Para cumplir la spec sin romper el invariante 11 se usa la tabla `liquidacion_movimiento` (ver 2.5), decisión aprobada. No se permite ningún UPDATE del ledger.
+
+> Decisión de implementación (22/10/2026): no se agregan FKs a tablas que todavía no existen. `pago_deuda_id` viaja con `pago_deuda` en la 4b y `disputa_id` con `disputa` en la 4c; cada una conserva el UNIQUE parcial que le corresponde.
 
 Constraints e índices:
 
@@ -566,7 +568,7 @@ Cada sub-etapa termina con OpenAPI actualizado, migración nueva, pruebas, `npm 
 ### 4a — Fundaciones: ledger, cuentas y estado del local
 
 - Migración 1: valores nuevos del enum de ledger (`liberacion`, `congelacion`, `descongelacion`, `deuda_reembolso`, `reversa_pago_a_local`, `reversa_cobro_deuda`), en un archivo separado porque PostgreSQL no deja usar un valor nuevo en la misma transacción.
-- Migración 2: columnas `disputa_id`, `pago_deuda_id` en ledger; `cuenta_local` por local; trigger de estado de local; claves de configuración.
+- Migración 2: `cuenta_local` por local; trigger de estado de local; claves de configuración e índices únicos parciales del ledger. Las columnas `pago_deuda_id` y `disputa_id` se difieren a la 4b y 4c, respectivamente, porque sus tablas todavía no existen.
 - `registrarMovimiento()` con los efectos nuevos y pruebas unitarias, incluida la fórmula con envío.
 - Helper `src/jobs/ejecutarJob.js` con `pg_try_advisory_lock` y cierre garantizado de la conexión.
 - `recalcular_estado_local()` y pruebas de todas las ramas, incluida la prueba de que `set_config(..., true)` no se filtra entre transacciones ni entre conexiones del pool.

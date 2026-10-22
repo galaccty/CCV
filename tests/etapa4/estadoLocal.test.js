@@ -13,10 +13,12 @@ import {
   crearPedidoDePrueba,
   crearPagoDePrueba,
   crearReembolsoDePrueba,
+  crearUsuarioDirecto,
 } from '../helpers/datos.js';
 import { withTransaccion } from '../../src/lib/transaccion.js';
 import { registrarMovimiento } from '../../src/services/ledger.js';
 import { recalcularEstadoLocal } from '../../src/services/estadoLocal.js';
+import { cambiarEstadoLocal } from '../../src/services/adminCatalogo.js';
 
 const { Client } = pg;
 const CON_BASE = await opcionesConBase();
@@ -86,6 +88,18 @@ async function bloquearComoJob(localId) {
       data: { estado: 'bloqueado' },
     });
   });
+}
+
+async function adminPrueba() {
+  return crearUsuarioDirecto({ nombre: 'Admin', roles: ['admin'] });
+}
+
+async function suspender(admin, localId) {
+  return cambiarEstadoLocal({ admin, id: localId, estado: 'suspendido' });
+}
+
+async function reactivar(admin, localId) {
+  return cambiarEstadoLocal({ admin, id: localId, estado: 'activo' });
 }
 
 describe('recalcular_estado_local - todas las ramas', () => {
@@ -298,6 +312,15 @@ describe('trigger ccv_estado_local_solo_sistema', () => {
     );
   });
 
+  test('rechaza reactivar un suspendido a mano', CON_BASE, async () => {
+    const local = await crearLocal('suspendido');
+
+    await assert.rejects(
+      () => prisma.local.update({ where: { id: local.id }, data: { estado: 'activo' } }),
+      /estado de deuda|invariante 9|restrict/i,
+    );
+  });
+
   test('el admin puede aprobar y suspender', CON_BASE, async () => {
     const pendiente = await crearLocal('pendiente_aprobacion');
     const activo = await prisma.local.update({
@@ -394,4 +417,71 @@ describe('trigger ccv_estado_local_solo_sistema', () => {
       }
     },
   );
+});
+
+describe('reactivacion de un local suspendido', () => {
+  test('sin deuda vuelve a activo', CON_BASE, async () => {
+    const admin = await adminPrueba();
+    const local = await crearLocal('activo');
+
+    await suspender(admin, local.id);
+    assert.equal((await leer(local.id)).estado, 'suspendido');
+
+    const respuesta = await reactivar(admin, local.id);
+    const fila = await leer(local.id);
+
+    assert.equal(respuesta.estado, 'activo');
+    assert.equal(fila.estado, 'activo');
+    assert.equal(
+      (await prisma.local.findUnique({ where: { id: local.id } }))
+        .estadoPrevioSuspension,
+      null,
+    );
+  });
+
+  test('con deuda sobre el limite vuelve a en_plazo', CON_BASE, async () => {
+    const admin = await adminPrueba();
+    const local = await crearLocal('activo');
+    await mover({
+      tipo: 'deuda_reembolso',
+      monto: LIMITE + 1n,
+      localId: local.id,
+    });
+
+    await suspender(admin, local.id);
+    const respuesta = await reactivar(admin, local.id);
+    const fila = await leer(local.id);
+
+    assert.equal(respuesta.estado, 'en_plazo');
+    assert.equal(fila.estado, 'en_plazo');
+    assert.equal(fila.cuenta.saldoDeuda, LIMITE + 1n);
+  });
+
+  test('bloqueado -> suspendido -> reactivar vuelve a bloqueado', CON_BASE, async () => {
+    const admin = await adminPrueba();
+    const local = await crearLocal('activo');
+    await mover({
+      tipo: 'deuda_reembolso',
+      monto: LIMITE + 1n,
+      localId: local.id,
+    });
+    await recalcular(local.id);
+    await bloquearComoJob(local.id);
+    assert.equal((await leer(local.id)).estado, 'bloqueado');
+
+    await suspender(admin, local.id);
+    assert.equal((await leer(local.id)).estado, 'suspendido');
+    assert.equal(
+      (await prisma.local.findUnique({ where: { id: local.id } }))
+        .estadoPrevioSuspension,
+      'bloqueado',
+    );
+
+    const respuesta = await reactivar(admin, local.id);
+    const fila = await leer(local.id);
+
+    assert.equal(respuesta.estado, 'bloqueado');
+    assert.equal(fila.estado, 'bloqueado');
+    assert.equal(fila.cuenta.saldoDeuda, LIMITE + 1n);
+  });
 });

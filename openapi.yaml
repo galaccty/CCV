@@ -1438,9 +1438,10 @@ paths:
       description: |
         Solo permite `activo` y `suspendido`. No se puede fijar `en_plazo` ni
         `bloqueado`: esos estados los maneja el sistema por deuda. Un local
-        `en_plazo` puede suspenderse, pero no reactivarse por panel mientras
-        tenga deuda; un local `bloqueado` solo lo libera el sistema. Cada
-        cambio queda en `auditoria_admin`.
+        `en_plazo` o `bloqueado` puede suspenderse. La reactivación de un
+        suspendido pasa por `recalcular_estado_local()` y termina en `activo`,
+        `en_plazo` o `bloqueado` según su deuda real; no se puede forzar
+        `activo` con un UPDATE directo. Cada cambio queda en `auditoria_admin`.
       operationId: cambiarEstadoLocal
       security:
         - cookieSesion: []

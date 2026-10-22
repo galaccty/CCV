@@ -21,7 +21,7 @@ import { obtenerConfiguracionEnTransaccion } from './configuracion.js';
  *   - sin deuda o deuda dentro del limite: activo y se limpia la fecha.
  */
 
-const ESTADOS_SIN_RECALCULO = new Set(['suspendido', 'pendiente_aprobacion']);
+const ESTADOS_SIN_RECALCULO = new Set(['pendiente_aprobacion']);
 const LIMITE_DEUDA_POR_DEFECTO = 50000n;
 const PLAZO_DIAS_POR_DEFECTO = 15;
 
@@ -59,12 +59,16 @@ function leerEnteroConfig(valor, porDefecto) {
  *
  * @param {number} localId
  * @param {object} [tx] cliente de Prisma de la transaccion abierta
- * @param {{ahora?: Date}} [opciones] fecha de referencia, para pruebas y jobs
+ * @param {object} [opciones]
+ * @param {Date} [opciones.ahora] fecha de referencia, para pruebas y jobs
+ * @param {boolean} [opciones.reactivarSuspendido] permite salir de suspendido;
+ *   solo lo usa la reactivacion administrativa. Sin esta bandera, un local
+ *   suspendido sigue siendo intocable para el recalculo automatico.
  */
 export async function recalcularEstadoLocal(
   localId,
   tx = transaccionActual()?.tx,
-  { ahora = new Date() } = {},
+  { ahora = new Date(), reactivarSuspendido = false } = {},
 ) {
   if (!Number.isInteger(localId) || localId <= 0) {
     throw new Error(`Local invalido: ${localId}`);
@@ -79,7 +83,8 @@ export async function recalcularEstadoLocal(
   }
 
   const filas = await cliente.$queryRaw`
-    SELECT "estado"::text AS "estado"
+    SELECT "estado"::text AS "estado",
+           "estado_previo_suspension"::text AS "estadoPrevioSuspension"
       FROM "local"
      WHERE "id" = ${localId}
      FOR UPDATE
@@ -90,6 +95,7 @@ export async function recalcularEstadoLocal(
   }
 
   const estadoAnterior = filas[0].estado;
+  const estadoPrevioSuspension = filas[0].estadoPrevioSuspension;
   const cuenta = await cliente.cuentaLocal.findUnique({ where: { localId } });
 
   if (!cuenta) {
@@ -126,8 +132,25 @@ export async function recalcularEstadoLocal(
   let fechaLimitePago = fechaActual;
   let motivo = 'sin_cambio';
 
-  if (ESTADOS_SIN_RECALCULO.has(estadoAnterior)) {
+  if (
+    ESTADOS_SIN_RECALCULO.has(estadoAnterior) ||
+    (estadoAnterior === 'suspendido' && !reactivarSuspendido)
+  ) {
     motivo = 'estado_administrativo';
+  } else if (
+    estadoAnterior === 'suspendido' &&
+    estadoPrevioSuspension === 'bloqueado'
+  ) {
+    // La suspension no perdona una deuda que ya habia bloqueado al local. Si
+    // mientras estuvo suspendido la saldo por completo, si se reactiva.
+    if (cuenta.saldoDeuda <= 0n && incumplidos === 0) {
+      estado = 'activo';
+      fechaLimitePago = null;
+      motivo = 'desbloqueado';
+    } else {
+      estado = 'bloqueado';
+      motivo = 'sigue_bloqueado';
+    }
   } else if (estadoAnterior === 'bloqueado') {
     if (cuenta.saldoDeuda <= 0n && incumplidos === 0) {
       estado = 'activo';
@@ -166,7 +189,12 @@ export async function recalcularEstadoLocal(
     `;
     await cliente.local.update({
       where: { id: localId },
-      data: { estado },
+      data: {
+        estado,
+        ...(estadoAnterior === 'suspendido'
+          ? { estadoPrevioSuspension: null }
+          : {}),
+      },
     });
   }
 

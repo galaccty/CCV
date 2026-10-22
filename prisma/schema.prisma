@@ -186,6 +186,10 @@ model Local {
   latitud              Float
   longitud             Float
   estado               EstadoLocal @default(pendiente_aprobacion)
+  // Estado que tenia el local cuando el admin lo suspendio. Al reactivarlo,
+  // recalcular_estado_local() usa este dato para no perdonar una deuda que ya
+  // habia llevado al local a bloqueado/en_plazo.
+  estadoPrevioSuspension EstadoLocal? @map("estado_previo_suspension")
   promedioCalificacion Float       @default(0) @map("promedio_calificacion")
   totalCalificaciones  Int         @default(0) @map("total_calificaciones")
   creadoEn             DateTime    @default(now()) @map("creado_en") @db.Timestamptz(3)

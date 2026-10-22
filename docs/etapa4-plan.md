@@ -655,6 +655,18 @@ Orden elegido: primero las fundaciones, luego efectivo, luego disputas/reembolso
 - En producción los reembolsos digitales siguen siendo manuales desde Wompi hasta confirmar la API de Reembolsos V2; el proveedor falso cubre las pruebas.
 - No se toca `main`; todo va a `dev` en commits pequeños.
 
+### 9.4 Pendientes previos al despliegue
+
+- **`npm audit` (3 vulnerabilidades altas).** Al 22/10/2026, `npm audit --omit=dev`
+  reporta 3 vulnerabilidades altas en la cadena de Prisma:
+  `deepmerge-ts <8.0.0` (GHSA-ggr8-5vv4-36mx, agotamiento de pila al fusionar
+  grafos recursivos), `@prisma/config` (afectado a traves de `deepmerge-ts`) y
+  `prisma` (afectado a traves de `@prisma/config`). El arreglo disponible es
+  `prisma@7.10.1`, un salto de version mayor; no se aplica en esta etapa.
+  Antes de desplegar hay que evaluar y probar esa migracion de Prisma por
+  separado. **No ejecutar `npm audit fix`**: puede cambiar la version mayor y
+  romper migraciones, el cliente generado o los scripts de base de datos.
+
 ---
 
 ## 10. Criterios de aceptación de la etapa

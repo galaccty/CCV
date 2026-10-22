@@ -1,10 +1,12 @@
 import { prisma } from '../lib/prisma.js';
+import { withTransaccion } from '../lib/transaccion.js';
 import { convertirBigIntAJson } from '../lib/dinero.js';
 import {
   ErrorApi,
   errorNoEncontrado,
 } from '../lib/errores.js';
 import { envolverLista } from '../lib/validacion.js';
+import { recalcularEstadoLocal } from './estadoLocal.js';
 import {
   serializarCategoria,
   serializarLocal,
@@ -15,8 +17,9 @@ import {
  * ADMINISTRACION DEL CATALOGO (Etapa 3)
  * =====================================
  * El admin administra rubros, categorias globales y la aprobacion/suspension de
- * locales. Los estados `en_plazo` y `bloqueado` son de deuda y no se tocan
- * desde estas rutas (seccion 4.7 de la especificacion).
+ * locales. Los estados `en_plazo` y `bloqueado` son de deuda y no se fijan a
+ * mano (seccion 4.7 de la especificacion). La reactivacion de un suspendido
+ * pasa por recalcularEstadoLocal() para no saltarse la deuda real.
  */
 
 const ESTADOS_ADMIN = new Set(['activo', 'suspendido']);
@@ -58,7 +61,11 @@ export async function cambiarEstadoLocal({ admin, id, estado }) {
 
   if (!local) throw errorNoEncontrado('Local no encontrado.');
 
-  if (local.estado === 'bloqueado') {
+  if (local.estado === estado) {
+    return convertirBigIntAJson(serializarLocal(local));
+  }
+
+  if (estado === 'activo' && local.estado === 'bloqueado') {
     throw new ErrorApi(
       'estado_solo_sistema',
       'El estado bloqueado solo lo libera el sistema cuando la deuda se resuelve.',
@@ -74,16 +81,61 @@ export async function cambiarEstadoLocal({ admin, id, estado }) {
     );
   }
 
-  if (local.estado === estado) {
-    return convertirBigIntAJson(serializarLocal(local));
-  }
+  const actualizado = await withTransaccion(async (tx) => {
+    // La reactivacion de un suspendido no escribe el estado a mano: la decide
+    // la deuda real a traves de recalcularEstadoLocal(). Asi un local que ya
+    // estaba bloqueado no vuelve a activo por el solo hecho de suspenderlo y
+    // reactivarlo.
+    if (estado === 'activo' && local.estado === 'suspendido') {
+      const recalculo = await recalcularEstadoLocal(local.id, tx, {
+        reactivarSuspendido: true,
+      });
 
-  const actualizado = await prisma.$transaction(async (tx) => {
-    const localActualizado = await tx.local.update({
-      where: { id: local.id },
-      data: { estado },
-      include: { rubro: true },
+      await tx.auditoriaAdmin.create({
+        data: {
+          origen: 'admin',
+          adminId: admin.id,
+          accion: 'reactivar_local_suspendido',
+          objeto: 'local',
+          objetoId: String(local.id),
+          detalle: {
+            estado_anterior: local.estado,
+            estado_nuevo: recalculo.estado,
+            estado_previo_suspension: local.estadoPrevioSuspension,
+            motivo: recalculo.motivo,
+          },
+        },
+      });
+
+      return tx.local.findUnique({
+        where: { id: local.id },
+        include: { rubro: true },
+      });
+    }
+
+    const datos =
+      estado === 'suspendido'
+        ? {
+            estado,
+            estadoPrevioSuspension:
+              local.estado === 'suspendido'
+                ? local.estadoPrevioSuspension
+                : local.estado,
+          }
+        : { estado, estadoPrevioSuspension: null };
+
+    const cambiados = await tx.local.updateMany({
+      where: { id: local.id, estado: local.estado },
+      data: datos,
     });
+
+    if (cambiados.count === 0) {
+      throw new ErrorApi(
+        'estado_local_cambiado',
+        'El local cambio de estado mientras se procesaba la solicitud.',
+        409,
+      );
+    }
 
     await tx.auditoriaAdmin.create({
       data: {
@@ -96,7 +148,10 @@ export async function cambiarEstadoLocal({ admin, id, estado }) {
       },
     });
 
-    return localActualizado;
+    return tx.local.findUnique({
+      where: { id: local.id },
+      include: { rubro: true },
+    });
   });
 
   return convertirBigIntAJson(serializarLocal(actualizado));

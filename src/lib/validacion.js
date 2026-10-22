@@ -461,3 +461,45 @@ export const esquemaFiltrosDisputas = z.object({
   estado: z.enum(ESTADOS_DISPUTA).optional(),
   local_id: z.coerce.number().int().positive().optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Esquemas de validacion de la Etapa 4c-2a (reembolsos por linea)
+// ---------------------------------------------------------------------------
+
+/**
+ * La entrada solo trae lineas y cantidades. Cualquier `monto` que mande el
+ * cliente se descarta: el backend lo recalcula con `detalle_producto`.
+ */
+export const esquemaCrearReembolso = z
+  .object({
+    motivo: z
+      .string()
+      .trim()
+      .min(1, 'El motivo del reembolso es obligatorio.')
+      .max(200),
+    lineas: z
+      .array(
+        z.object({
+          detalle_id: z.coerce.number().int().positive(),
+          cantidad: z.coerce.number().int().min(1).max(999),
+        }),
+      )
+      .min(1, 'El reembolso necesita al menos una linea.')
+      .max(50, 'El reembolso no puede tener mas de 50 lineas.'),
+    incluye_envio: z.boolean().optional().default(false),
+    disputa_id: z.coerce.number().int().positive().nullable().optional(),
+  })
+  .superRefine((datos, ctx) => {
+    const vistos = new Set();
+
+    datos.lineas.forEach((linea, indice) => {
+      if (vistos.has(linea.detalle_id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['lineas', indice, 'detalle_id'],
+          message: 'No repitas la misma linea en el reembolso.',
+        });
+      }
+      vistos.add(linea.detalle_id);
+    });
+  });

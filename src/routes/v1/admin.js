@@ -3,6 +3,7 @@ import * as adminCatalogo from '../../services/adminCatalogo.js';
 import * as pagoDeuda from '../../services/pagoDeuda.js';
 import * as cuentaLocal from '../../services/cuentaLocal.js';
 import * as disputas from '../../services/disputas.js';
+import * as reembolsos from '../../services/reembolsos.js';
 import { requiereRol } from '../../middlewares/sesion.js';
 import { idempotenciaRequerida } from '../../middlewares/idempotencia.js';
 import {
@@ -167,5 +168,41 @@ router.post('/disputas/:id/evidencia', async (req, res) => {
     }),
   );
 });
+
+// ---------------------------------------------------------------------------
+// Reembolsos por linea (Etapa 4c-2a)
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/reembolsos/:id/completar',
+  idempotenciaRequerida,
+  async (req, res) => {
+    const reembolsoId = esquemaIdPositivo.parse(req.params.id);
+
+    res.json(
+      await reembolsos.completarReembolso({
+        reembolsoId,
+        admin: req.usuario,
+        idempotenciaId: res.locals.idempotenciaId,
+      }),
+    );
+  },
+);
+
+router.post(
+  '/reembolsos/:id/fallar',
+  idempotenciaRequerida,
+  async (req, res) => {
+    const reembolsoId = esquemaIdPositivo.parse(req.params.id);
+
+    res.json(
+      await reembolsos.fallarReembolso({
+        reembolsoId,
+        admin: req.usuario,
+        idempotenciaId: res.locals.idempotenciaId,
+      }),
+    );
+  },
+);
 
 export default router;

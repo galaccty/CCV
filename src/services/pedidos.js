@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import crypto from 'node:crypto';
 import { withTransaccion } from '../lib/transaccion.js';
 import {
   aBigInt,
@@ -26,8 +27,10 @@ import { completarEnTx } from './idempotencia.js';
  * cliente solo manda variante_id y cantidad; cualquier monto que intente
  * mandar se ignora porque Zod lo descarta.
  *
- * El stock SOLO se verifica, no se descuenta. El descuento atomico ocurre
- * cuando el pago se confirma (webhook).
+ * El stock SOLO se verifica, no se descuenta. En un pedido digital el descuento
+ * atomico ocurre cuando el pago se confirma (webhook). En un pedido en efectivo
+ * el pedido nace `en_proceso`, se crea un pago pendiente y el stock se descuenta
+ * cuando el vendedor acepta el sub-pedido.
  *
  * Los items se agrupan por local. Cada sub_pedido calcula su propio envio,
  * comision y pedido minimo; el pedido tiene un solo pago por el total.
@@ -336,7 +339,8 @@ export async function crearPedido({ usuario, datos, idempotenciaId }) {
         direccionLongitud: datos.direccion.longitud,
         total: preparado.total,
         metodoPago: datos.metodo_pago,
-        estado: 'pendiente_pago',
+        estado:
+          datos.metodo_pago === 'efectivo' ? 'en_proceso' : 'pendiente_pago',
         configSnapshot: preparado.snapshot,
       },
     });
@@ -377,6 +381,21 @@ export async function crearPedido({ usuario, datos, idempotenciaId }) {
           estadoAnterior: null,
           estadoNuevo: 'por_aceptar',
           cambiadoPor: usuario.id,
+        },
+      });
+    }
+
+    if (datos.metodo_pago === 'efectivo') {
+      // El pago en efectivo nace pendiente y se aprueba al entregar. El monto
+      // sale del total calculado por el backend, nunca del cuerpo del cliente.
+      await tx.pago.create({
+        data: {
+          tipoPago: 'pedido',
+          pedidoId: pedido.id,
+          referencia: `CCV-EF-${crypto.randomBytes(16).toString('hex')}`,
+          metodoPago: 'efectivo',
+          monto: pedido.total,
+          estado: 'pendiente',
         },
       });
     }

@@ -149,9 +149,9 @@ export const esquemaDireccionEntrega = z.object({
  */
 export const esquemaCheckout = z.object({
   direccion: esquemaDireccionEntrega,
-  metodo_pago: z.enum(['tarjeta', 'pse', 'nequi'], {
+  metodo_pago: z.enum(['tarjeta', 'pse', 'nequi', 'efectivo'], {
     errorMap: () => ({
-      message: 'El metodo de pago debe ser tarjeta, pse o nequi.',
+      message: 'El metodo de pago debe ser tarjeta, pse, nequi o efectivo.',
     }),
   }),
   items: z

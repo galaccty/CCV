@@ -54,6 +54,7 @@ model Usuario {
   disputasComprador     Disputa[]                  @relation("DisputaComprador")
   disputasResueltas     Disputa[]                  @relation("DisputaResuelta")
   evidenciasDisputa     DisputaEvidencia[]
+  reembolsosRegistrados Reembolso[]               @relation("ReembolsoRegistrado")
 
   @@map("usuario")
 }
@@ -408,8 +409,9 @@ model DetalleProducto {
   cantidad          Int
   precioUnitario    BigInt @map("precio_unitario")
 
-  subPedido SubPedido        @relation(fields: [subPedidoId], references: [id])
-  variante  ProductoVariante @relation(fields: [varianteId], references: [id])
+  subPedido       SubPedido        @relation(fields: [subPedidoId], references: [id])
+  variante        ProductoVariante @relation(fields: [varianteId], references: [id])
+  lineasReembolso ReembolsoLinea[]
 
   @@unique([subPedidoId, varianteId])
   @@index([varianteId])
@@ -498,24 +500,50 @@ model Idempotencia {
 // el stock, que es lo que exige la Etapa 2.
 
 model Reembolso {
-  id            Int             @id @default(autoincrement())
-  pagoId        Int             @map("pago_id")
-  subPedidoId   Int             @map("sub_pedido_id")
-  tipo          TipoReembolso   @default(digital)
-  monto         BigInt
-  estado        EstadoReembolso @default(pendiente)
-  motivo        String          @db.VarChar(200)
-  fecha         DateTime        @default(now()) @db.Timestamptz(3)
-  actualizadoEn DateTime        @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  id             Int             @id @default(autoincrement())
+  pagoId         Int             @map("pago_id")
+  subPedidoId    Int             @map("sub_pedido_id")
+  disputaId      Int?            @unique @map("disputa_id")
+  tipo           TipoReembolso   @default(digital)
+  monto          BigInt
+  montoEnvio     BigInt          @default(0) @map("monto_envio")
+  incluyeEnvio   Boolean         @default(false) @map("incluye_envio")
+  desdeCongelado Boolean         @default(false) @map("desde_congelado")
+  estado         EstadoReembolso @default(pendiente)
+  motivo         String          @db.VarChar(200)
+  fechaLimite    DateTime?       @map("fecha_limite") @db.Timestamptz(3)
+  registradoPor  Int?            @map("registrado_por")
+  completadoEn   DateTime?       @map("completado_en") @db.Timestamptz(3)
+  fecha          DateTime        @default(now()) @db.Timestamptz(3)
+  actualizadoEn  DateTime        @updatedAt @map("actualizado_en") @db.Timestamptz(3)
 
-  pago        Pago      @relation(fields: [pagoId], references: [id])
-  subPedido   SubPedido @relation(fields: [subPedidoId], references: [id])
-  movimientos Ledger[]
+  pago         Pago              @relation(fields: [pagoId], references: [id])
+  subPedido    SubPedido         @relation(fields: [subPedidoId], references: [id])
+  disputa      Disputa?          @relation(fields: [disputaId], references: [id], onDelete: Restrict)
+  registrador  Usuario?          @relation("ReembolsoRegistrado", fields: [registradoPor], references: [id], onDelete: Restrict)
+  lineas       ReembolsoLinea[]
+  movimientos  Ledger[]
 
   @@index([pagoId])
   @@index([subPedidoId])
   @@index([estado])
+  @@index([registradoPor])
   @@map("reembolso")
+}
+
+model ReembolsoLinea {
+  id          Int    @id @default(autoincrement())
+  reembolsoId Int    @map("reembolso_id")
+  detalleId   Int    @map("detalle_id")
+  cantidad    Int
+  monto       BigInt
+
+  reembolso Reembolso       @relation(fields: [reembolsoId], references: [id], onDelete: Restrict)
+  detalle   DetalleProducto @relation(fields: [detalleId], references: [id], onDelete: Restrict)
+
+  @@unique([reembolsoId, detalleId])
+  @@index([detalleId])
+  @@map("reembolso_linea")
 }
 
 // ---------------------------------------------------------------------------
@@ -541,6 +569,7 @@ model Disputa {
   usuario     Usuario            @relation("DisputaComprador", fields: [usuarioId], references: [id], onDelete: Restrict)
   resuelto    Usuario?           @relation("DisputaResuelta", fields: [resueltoPor], references: [id], onDelete: Restrict)
   evidencias  DisputaEvidencia[]
+  reembolso   Reembolso?
   movimientos Ledger[]
 
   @@index([usuarioId])

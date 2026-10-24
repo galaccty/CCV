@@ -26,6 +26,7 @@ export const CLAVES_JOBS = Object.freeze({
   expirar_pagos: 41004,
   conciliar: 41005,
   integridad: 41006,
+  reembolsos_efectivo_vencidos: 41007,
 });
 
 /**

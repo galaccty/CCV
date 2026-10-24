@@ -15,6 +15,7 @@
     "dev": "node --watch src/server.js",
     "seed": "node scripts/seed.js",
     "job:cancelar-efectivo-sin-aceptar": "node scripts/job-cancelar-efectivo-sin-aceptar.js",
+    "job:reembolsos-efectivo-vencidos": "node scripts/job-reembolsos-efectivo-vencidos.js",
     "verificar": "npm run check:invariantes && npm run check:pruebas && npm test",
     "check:invariantes": "node checks/invariantes-estaticos.js",
     "test:invariantes": "node --test --test-reporter=spec tests/invariantes/*.test.js",

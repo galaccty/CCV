@@ -25,7 +25,8 @@ import {
  * Se prueba el circuito completo sin la resolucion de disputas de 4c-2b:
  *
  *   - el backend calcula con precios congelados y descarta montos del cliente;
- *   - completar antes de liberar solo escribe el reembolso de plataforma;
+ *   - completar antes de liberar asienta el reembolso y la reversa de comision
+ *     de plataforma, sin tocar el saldo del vendedor;
  *   - completar despues de liberar mueve el ledger local, revierte comision y
  *     usa el saldo congelado/disponible antes de crear deuda;
  *   - las lineas y snapshots no cambian;
@@ -248,7 +249,7 @@ describe('reembolsos - calculo con precios congelados', () => {
 });
 
 describe('reembolsos - completar antes y despues de liberar', () => {
-  test('antes de liberar solo asienta el reembolso de plataforma', CON_BASE, async () => {
+  test('antes de liberar asienta reembolso y reversa de plataforma, sin tocar al vendedor', CON_BASE, async () => {
     const escenario = await crearEscenario({
       cantidad: 1,
       precio: 10000n,
@@ -267,10 +268,17 @@ describe('reembolsos - completar antes y despues de liberar', () => {
     assert.equal(completado.completado_en !== null, true);
 
     const movimientos = await movimientosDe(reembolso.id);
-    assert.equal(movimientos.length, 1);
-    assert.equal(movimientos[0].tipo, 'reembolso');
-    assert.equal(movimientos[0].localId, null);
-    assert.equal(movimientos[0].monto, 10000n);
+    assert.deepEqual(
+      movimientos.map((movimiento) => [
+        movimiento.tipo,
+        movimiento.localId,
+        movimiento.monto,
+      ]),
+      [
+        ['reembolso', null, 10000n],
+        ['reversa_comision', null, 2000n],
+      ],
+    );
 
     const cuentaLocal = await cuenta(escenario.local.id);
     assert.equal(cuentaLocal.saldoPorPagar, 0n);
@@ -322,6 +330,7 @@ describe('reembolsos - completar antes y despues de liberar', () => {
         ['congelacion', escenario.local.id, 8000n],
         ['reembolso', null, 10000n],
         ['descongelacion', escenario.local.id, 8000n],
+        ['reversa_comision', null, 2000n],
         ['reversa_comision', escenario.local.id, 2000n],
         ['reembolso', escenario.local.id, 10000n],
       ],
@@ -440,6 +449,7 @@ describe('reembolsos - snapshots y lineas multiples', () => {
     const reversas = await prisma.ledger.findMany({
       where: {
         subPedidoId: pedido.subPedido.id,
+        localId: catalogo.local.id,
         tipo: 'reversa_comision',
       },
       orderBy: { id: 'asc' },

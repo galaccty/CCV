@@ -34,9 +34,9 @@ import { registrarMovimiento } from './ledger.js';
  * `pendiente` decide quien gana. El ganador escribe los asientos del ledger en
  * la misma transaccion. Fallar descongela y alerta, sin tocar el pago.
  *
- * Si el saldo aun no fue liberado, solo se registra el reembolso de plataforma;
- * el asiento local, la comision y el redondeo quedan diferidos a la liberacion
- * (Etapa 4d).
+ * Si el saldo aun no fue liberado, se registran el reembolso y la reversa de
+ * comision de plataforma; el asiento local, la comision del vendedor y el
+ * redondeo quedan diferidos a la liberacion (Etapa 4d).
  */
 
 const INCLUIR_REEMBOLSO = {
@@ -211,18 +211,32 @@ async function calcularComisionObjetivo(tx, sub) {
   const restante = restar(sub.subtotalProductos, reembolsadoProductos);
   const subtotalRestante = restante > 0n ? restante : 0n;
 
-  const reversas = await tx.ledger.aggregate({
-    where: {
-      subPedidoId: sub.id,
-      localId: sub.localId,
-      tipo: 'reversa_comision',
-    },
-    _sum: { monto: true },
-  });
+  const [reversasLocal, reversasPlataforma] = await Promise.all([
+    tx.ledger.aggregate({
+      where: {
+        subPedidoId: sub.id,
+        localId: sub.localId,
+        tipo: 'reversa_comision',
+      },
+      _sum: { monto: true },
+    }),
+    tx.ledger.aggregate({
+      where: {
+        subPedidoId: sub.id,
+        localId: null,
+        tipo: 'reversa_comision',
+      },
+      _sum: { monto: true },
+    }),
+  ]);
 
-  const comisionNetaActual = restar(
+  const comisionNetaLocal = restar(
     sub.comision,
-    reversas._sum.monto ?? 0n,
+    reversasLocal._sum.monto ?? 0n,
+  );
+  const comisionNetaPlataforma = restar(
+    sub.comision,
+    reversasPlataforma._sum.monto ?? 0n,
   );
 
   let comisionObjetivo = 0n;
@@ -236,22 +250,48 @@ async function calcularComisionObjetivo(tx, sub) {
       proporcional > comisionMinima ? proporcional : comisionMinima;
   }
 
-  const diferencia = restar(comisionNetaActual, comisionObjetivo);
+  const diferenciaLocal = restar(comisionNetaLocal, comisionObjetivo);
+  const diferenciaPlataforma = restar(
+    comisionNetaPlataforma,
+    comisionObjetivo,
+  );
 
   return {
     comisionObjetivo,
-    comisionNetaActual,
-    reversa: diferencia > 0n ? diferencia : 0n,
-    ajuste: diferencia < 0n ? -diferencia : 0n,
+    comisionNetaActual: comisionNetaLocal,
+    reversa: diferenciaLocal > 0n ? diferenciaLocal : 0n,
+    reversaPlataforma:
+      diferenciaPlataforma > 0n ? diferenciaPlataforma : 0n,
+    ajuste: diferenciaLocal < 0n ? -diferenciaLocal : 0n,
     reembolsadoProductos,
     subtotalRestante,
   };
 }
 
-async function aplicarRevisionComision(tx, sub, reembolso) {
+async function aplicarRevisionComision(
+  tx,
+  sub,
+  reembolso,
+  { actualizarLocal, actualizarPlataforma },
+) {
   const calculo = await calcularComisionObjetivo(tx, sub);
 
-  if (calculo.reversa > 0n) {
+  // La plataforma solo reconoce ingreso por comision en pagos digitales. Su
+  // reversa es independiente de que el saldo del vendedor ya se haya liberado:
+  // reduce el ingreso neto en la misma fecha del reembolso.
+  if (actualizarPlataforma && calculo.reversaPlataforma > 0n) {
+    await registrarMovimiento({
+      tipo: 'reversa_comision',
+      monto: calculo.reversaPlataforma,
+      subPedidoId: sub.id,
+      reembolsoId: reembolso.id,
+      pagoId: reembolso.pagoId,
+    });
+  }
+
+  // En efectivo la comision vive como deuda del vendedor. En digital, el
+  // reverso local se difiere hasta la liberacion si el saldo aun no salio.
+  if (actualizarLocal && calculo.reversa > 0n) {
     await registrarMovimiento({
       tipo: 'reversa_comision',
       monto: calculo.reversa,
@@ -262,8 +302,9 @@ async function aplicarRevisionComision(tx, sub, reembolso) {
   }
 
   // Si una reversa anterior dejo la comision neta por debajo del objetivo, la
-  // diferencia exacta se corrige con ajuste de redondeo (debito al vendedor).
-  if (calculo.ajuste > 0n) {
+  // diferencia exacta se corrige con ajuste de redondeo.
+  if (actualizarLocal && calculo.ajuste > 0n) {
+    const enEfectivo = reembolso.tipo === 'efectivo';
     await registrarMovimiento({
       tipo: 'ajuste_redondeo',
       monto: calculo.ajuste,
@@ -271,7 +312,7 @@ async function aplicarRevisionComision(tx, sub, reembolso) {
       subPedidoId: sub.id,
       reembolsoId: reembolso.id,
       direccion: 'debito',
-      cuentaAjuste: 'saldoPorPagar',
+      cuentaAjuste: enEfectivo ? 'saldoDeuda' : 'saldoPorPagar',
     });
   }
 
@@ -691,9 +732,15 @@ export async function completarReembolso({
             disputaId: reembolso.disputaId,
           });
         }
+      }
 
-        await aplicarRevisionComision(tx, sub, reembolso);
+      const esDigital = reembolso.tipo === 'digital';
+      const calculoComision = await aplicarRevisionComision(tx, sub, reembolso, {
+        actualizarLocal: !esDigital || Boolean(sub.saldoLiberadoEn),
+        actualizarPlataforma: esDigital,
+      });
 
+      if (esDigital && sub.saldoLiberadoEn) {
         const cuenta = await bloquearCuenta(tx, sub.localId);
         const montoLocal =
           cuenta.saldoPorPagar < reembolso.monto
@@ -723,6 +770,13 @@ export async function completarReembolso({
           });
           await recalcularEstadoLocal(sub.localId, tx);
         }
+      }
+
+      if (
+        !esDigital &&
+        (calculoComision.reversa > 0n || calculoComision.ajuste > 0n)
+      ) {
+        await recalcularEstadoLocal(sub.localId, tx);
       }
 
       const totalPago = await sincronizarPago(tx, reembolso.pagoId);

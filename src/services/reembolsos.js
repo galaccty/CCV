@@ -192,7 +192,14 @@ async function montoCongeladoDelReembolso(tx, reembolsoId) {
   return aBigInt(filas[0]?.total ?? 0, 'monto_congelado');
 }
 
-async function calcularComisionObjetivo(tx, sub) {
+/**
+ * Calcula la comision objetivo y las reversas que faltan para un sub-pedido.
+ *
+ * Se exporta porque la liberacion de saldo (Etapa 4d) necesita exactamente la
+ * misma formula. La liberacion usa `reversa` para el lado local y no escribe
+ * `reversaPlataforma`: esa ya se registro al completar los reembolsos.
+ */
+export async function calcularComisionObjetivoEnTx(tx, sub) {
   const config = sub.pedido?.configSnapshot ?? {};
   const porcentaje = config.porcentaje_comision ?? 0;
   const comisionMinima = aBigInt(config.comision_minima ?? 0, 'comision_minima');
@@ -274,7 +281,7 @@ async function aplicarRevisionComision(
   reembolso,
   { actualizarLocal, actualizarPlataforma },
 ) {
-  const calculo = await calcularComisionObjetivo(tx, sub);
+  const calculo = await calcularComisionObjetivoEnTx(tx, sub);
 
   // La plataforma solo reconoce ingreso por comision en pagos digitales. Su
   // reversa es independiente de que el saldo del vendedor ya se haya liberado:

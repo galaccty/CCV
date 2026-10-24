@@ -1,7 +1,7 @@
 ﻿import '../helpers/entorno.js';
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { pendiente, estadoInvariante } from '../helpers/pendiente.js';
+import { estadoInvariante } from '../helpers/pendiente.js';
 import { opcionesConBase, prisma, cerrarConexion } from '../helpers/base.js';
 import {
   crearCatalogo,
@@ -10,7 +10,11 @@ import {
   crearReembolsoDePrueba,
   crearUsuarioDirecto,
 } from '../helpers/datos.js';
-import { subPedidosElegiblesParaLiberar } from '../../src/services/liberacion.js';
+import {
+  liberarSaldos,
+  liberarSubPedido,
+  subPedidosElegiblesParaLiberar,
+} from '../../src/services/liberacion.js';
 import {
   abrirDisputa,
   resolverDisputa,
@@ -19,20 +23,20 @@ import {
 /**
  * INVARIANTE 6 - entregado y el dinero movido son hechos distintos.
  *
- * La Etapa 2 ya puede comprobar una parte: un sub_pedido con un reembolso
- * pendiente no es elegible para liberar saldo. La Etapa 4c-1 agrega la otra:
- * una disputa abierta tampoco es elegible. El job que escribe el saldo sigue
- * en la Etapa 4d.
+ * La Etapa 2 comprueba que un sub_pedido con un reembolso pendiente no es
+ * elegible para liberar saldo. La Etapa 4c-1 agrega que una disputa abierta
+ * tampoco lo es. La Etapa 4d ya escribe el saldo: este archivo verifica tanto
+ * la elegibilidad como el efecto real del job.
  */
 
 export const ESTADO = estadoInvariante({
   aplica: true,
   etapa: 'Etapa 2 / Etapa 4',
   motivo:
-    'La elegibilidad ya excluye reembolsos pendientes y disputas abiertas; el job llega en la Etapa 4d.',
+    'El job 4d libera solo despues de la retencion y respeta reembolsos pendientes y disputas abiertas.',
 });
 
-const cuandoAplique = pendiente('Etapa 4', ESTADO.motivo);
+const UN_DIA = 24 * 60 * 60 * 1000;
 
 const CON_BASE = await opcionesConBase();
 
@@ -113,10 +117,39 @@ describe('invariante 6 - entregado y el dinero movido son hechos distintos', () 
     assert.equal(sigueBloqueado.saldoLiberadoEn, null);
   });
 
-  test('no se libera saldo antes de dias_retencion', cuandoAplique, () => {
-    // A activar en la Etapa 4
-    //   marcar entregado con retencion de 5 dias y verificar que a los 4 dias saldo_liberado_en sigue nulo
-    assert.ok(true);
+  test('no se libera saldo antes de dias_retencion', CON_BASE, async () => {
+    const ahora = new Date();
+    const { local, variante } = await crearCatalogo({ precio: 10000n });
+    const pedido = await crearPedidoDePrueba({
+      local,
+      variante,
+      estadoPedido: 'completado',
+      estadoSubPedido: 'entregado',
+    });
+    await prisma.subPedido.update({
+      where: { id: pedido.subPedido.id },
+      data: {
+        fechaEntrega: new Date(ahora.getTime() - 4 * UN_DIA),
+      },
+    });
+
+    const resultado = await liberarSubPedido({
+      subPedidoId: pedido.subPedido.id,
+      ahora,
+    });
+
+    assert.equal(resultado.liberado, false);
+    assert.equal(resultado.motivo, 'no_elegible');
+
+    const sub = await prisma.subPedido.findUnique({
+      where: { id: pedido.subPedido.id },
+    });
+    assert.equal(sub.saldoLiberadoEn, null);
+
+    const movimientos = await prisma.ledger.count({
+      where: { subPedidoId: pedido.subPedido.id },
+    });
+    assert.equal(movimientos, 0);
   });
 
   test('una disputa abierta excluye el sub-pedido de la liberacion', CON_BASE, async () => {
@@ -227,9 +260,46 @@ describe('invariante 6 - entregado y el dinero movido son hechos distintos', () 
     assert.equal(sub.saldoLiberadoEn, null);
   });
 
-  test('el job corre en la fecha correcta', cuandoAplique, () => {
-    // A activar en la Etapa 4
-    //   con fecha_entrega + dias_retencion llegada, verificar que el job libera y llena saldo_liberado_en
-    assert.ok(true);
+  test('el job corre en la fecha correcta', CON_BASE, async () => {
+    const ahora = new Date();
+    const { local, variante } = await crearCatalogo({ precio: 10000n });
+    const pedido = await crearPedidoDePrueba({
+      local,
+      variante,
+      comision: 2000n,
+      estadoPedido: 'completado',
+      estadoSubPedido: 'entregado',
+    });
+    await prisma.subPedido.update({
+      where: { id: pedido.subPedido.id },
+      data: {
+        fechaEntrega: new Date(ahora.getTime() - 5 * UN_DIA),
+      },
+    });
+
+    const resultado = await liberarSaldos({
+      ahora,
+      subPedidoIds: [pedido.subPedido.id],
+    });
+
+    assert.equal(resultado.liberados, 1);
+
+    const sub = await prisma.subPedido.findUnique({
+      where: { id: pedido.subPedido.id },
+    });
+    assert.ok(sub.saldoLiberadoEn);
+
+    const movimientos = await prisma.ledger.findMany({
+      where: { subPedidoId: pedido.subPedido.id },
+      orderBy: { id: 'asc' },
+    });
+    assert.deepEqual(
+      movimientos.map((movimiento) => [
+        movimiento.tipo,
+        movimiento.localId,
+        movimiento.monto,
+      ]),
+      [['liberacion', local.id, 8000n]],
+    );
   });
 });

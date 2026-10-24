@@ -24,7 +24,7 @@ const ESPERADOS = [
   [3, 'activo', 'el webhook responde 200 solo despues de procesar; 5xx si es transitorio'],
   [4, 'activo', 'guardian en ejecucion con AsyncLocalStorage'],
   [5, 'activo', 'triggers: los snapshots de sub_pedido y detalle_producto no se modifican'],
-  [6, 'parcial', 'reembolso pendiente y disputa abierta bloquean la consulta; job Etapa 4d'],
+  [6, 'activo', 'job 4d: libera tras la retencion y respeta reembolsos pendientes y disputas abiertas'],
   [7, 'activo', 'modulo unico de stock y descuento atomico probado en concurrencia'],
   [8, 'pendiente', 'Etapa 4 - liquidaciones'],
   [9, 'activo', 'trigger y recalcular_estado_local cubren la maquina de estados del local'],

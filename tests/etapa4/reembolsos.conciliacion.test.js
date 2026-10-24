@@ -14,7 +14,10 @@ import {
   porcentajeABasisPuntos,
 } from '../../src/lib/dinero.js';
 import { registrarMovimiento } from '../../src/services/ledger.js';
-import { calcularMontoLiberacion } from '../../src/services/liberacion.js';
+import {
+  calcularMontoLiberacion,
+  liberarSaldos,
+} from '../../src/services/liberacion.js';
 import {
   completarReembolso,
   crearReembolso,
@@ -34,8 +37,10 @@ async function crearEscenario({
   cantidad,
   precio,
   comision,
+  costoEnvio = 0n,
   metodoPago = 'tarjeta',
   liberar = false,
+  fechaEntrega = null,
 }) {
   const { local, variante } = await crearCatalogo({ precio });
   const pedido = await crearPedidoDePrueba({
@@ -43,6 +48,7 @@ async function crearEscenario({
     variante,
     cantidad,
     comision,
+    costoEnvio,
     metodoPago,
     estadoPedido: 'en_proceso',
     estadoSubPedido: 'entregado',
@@ -52,6 +58,14 @@ async function crearEscenario({
     metodoPago,
     estado: 'aprobado',
   });
+
+  if (fechaEntrega) {
+    await prisma.subPedido.update({
+      where: { id: pedido.subPedido.id },
+      data: { fechaEntrega },
+    });
+    pedido.subPedido.fechaEntrega = fechaEntrega;
+  }
 
   if (comision > 0n) {
     await asentar({
@@ -231,6 +245,75 @@ describe('reembolsos - conciliacion de comision y saldos', () => {
     assert.equal(await comisionObjetivo(escenario.subPedido.id), 0n);
     assert.equal(await ingresoNetoComision(escenario.subPedido.id), 0n);
     await conciliarCuenta(escenario.local.id);
+  });
+
+  test('parcial antes de liberar concilia y no revierte dos veces la comision', CON_BASE, async () => {
+    const ahora = new Date();
+    const escenario = await crearEscenario({
+      cantidad: 10,
+      precio: 10000n,
+      comision: 5000n,
+      costoEnvio: 2000n,
+      fechaEntrega: new Date(
+        ahora.getTime() - 6 * 24 * 60 * 60 * 1000,
+      ),
+    });
+
+    await reembolsar(escenario, 5);
+
+    // Antes de liberar, la plataforma ya reconocio la mitad de la comision y
+    // el vendedor todavia no tiene nada en su cuenta.
+    assert.equal(await comisionObjetivo(escenario.subPedido.id), 2500n);
+    assert.equal(await ingresoNetoComision(escenario.subPedido.id), 2500n);
+    await conciliarCuenta(escenario.local.id);
+
+    const cuentaAntes = await prisma.cuentaLocal.findUnique({
+      where: { localId: escenario.local.id },
+    });
+    assert.equal(cuentaAntes.saldoPorPagar, 0n);
+
+    const resultado = await liberarSaldos({
+      ahora,
+      subPedidoIds: [escenario.subPedido.id],
+    });
+    assert.equal(resultado.liberados, 1);
+
+    // El job no vuelve a tocar el ingreso de plataforma. La unica reversa de
+    // plataforma es la que escribio el reembolso al completarse.
+    assert.equal(await ingresoNetoComision(escenario.subPedido.id), 2500n);
+    const reversasPlataforma = await prisma.ledger.count({
+      where: {
+        subPedidoId: escenario.subPedido.id,
+        tipo: 'reversa_comision',
+        localId: null,
+      },
+    });
+    assert.equal(reversasPlataforma, 1);
+
+    // El vendedor recibe el credito una sola vez: 97.000 de liberacion,
+    // 2.500 de reversa local y 50.000 de descuento por el reembolso.
+    const cuentaDespues = await prisma.cuentaLocal.findUnique({
+      where: { localId: escenario.local.id },
+    });
+    assert.equal(cuentaDespues.saldoPorPagar, 49500n);
+
+    const movimientosLocal = await prisma.ledger.findMany({
+      where: { localId: escenario.local.id },
+      orderBy: { id: 'asc' },
+    });
+    assert.deepEqual(
+      movimientosLocal.map((movimiento) => [
+        movimiento.tipo,
+        movimiento.monto,
+      ]),
+      [
+        ['liberacion', 97000n],
+        ['reversa_comision', 2500n],
+        ['reembolso', 50000n],
+      ],
+    );
+
+    await conciliarDigital(escenario);
   });
 
   test('parcial y total despues de liberar concilian en cada paso', CON_BASE, async () => {

@@ -170,6 +170,44 @@ router.post('/disputas/:id/evidencia', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Resolucion de disputas y devolucion de producto (Etapa 4c-2b)
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/disputas/:id/resolver',
+  idempotenciaRequerida,
+  async (req, res) => {
+    const disputaId = esquemaIdPositivo.parse(req.params.id);
+
+    res.json(
+      await disputas.resolverDisputa({
+        disputaId,
+        admin: req.usuario,
+        datos: req.body,
+        idempotenciaId: res.locals.idempotenciaId,
+      }),
+    );
+  },
+);
+
+router.post(
+  '/sub-pedidos/:id/producto-recibido',
+  idempotenciaRequerida,
+  async (req, res) => {
+    const subPedidoId = esquemaIdPositivo.parse(req.params.id);
+
+    res.json(
+      await disputas.registrarProductoRecibido({
+        subPedidoId,
+        admin: req.usuario,
+        datos: req.body ?? {},
+        idempotenciaId: res.locals.idempotenciaId,
+      }),
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
 // Reembolsos por linea (Etapa 4c-2a)
 // ---------------------------------------------------------------------------
 

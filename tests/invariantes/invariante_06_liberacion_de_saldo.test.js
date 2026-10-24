@@ -8,9 +8,13 @@ import {
   crearPedidoDePrueba,
   crearPagoDePrueba,
   crearReembolsoDePrueba,
+  crearUsuarioDirecto,
 } from '../helpers/datos.js';
 import { subPedidosElegiblesParaLiberar } from '../../src/services/liberacion.js';
-import { abrirDisputa } from '../../src/services/disputas.js';
+import {
+  abrirDisputa,
+  resolverDisputa,
+} from '../../src/services/disputas.js';
 
 /**
  * INVARIANTE 6 - entregado y el dinero movido son hechos distintos.
@@ -168,6 +172,59 @@ describe('invariante 6 - entregado y el dinero movido son hechos distintos', () 
     });
     const sigueFuera = await subPedidosElegiblesParaLiberar();
     assert.ok(!sigueFuera.includes(conDisputa.subPedido.id));
+  });
+
+  test('resolver a favor del vendedor devuelve el sub-pedido a la liberacion', CON_BASE, async () => {
+    const { local, variante } = await crearCatalogo({ precio: 10000n });
+    const fechaEntregaVieja = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000);
+    const admin = await crearUsuarioDirecto({
+      nombre: 'Admin',
+      roles: ['admin'],
+    });
+
+    const pedido = await crearPedidoDePrueba({
+      local,
+      variante,
+      estadoPedido: 'completado',
+      estadoSubPedido: 'entregado',
+    });
+    await prisma.subPedido.update({
+      where: { id: pedido.subPedido.id },
+      data: { fechaEntrega: fechaEntregaVieja },
+    });
+
+    const disputa = await abrirDisputa({
+      usuario: pedido.comprador,
+      subPedidoId: pedido.subPedido.id,
+      datos: {
+        motivo: 'Disputa que gana el vendedor',
+        lineas: [{ detalle_id: pedido.detalle.id, cantidad: 1 }],
+      },
+    });
+
+    const antes = await subPedidosElegiblesParaLiberar();
+    assert.ok(!antes.includes(pedido.subPedido.id));
+
+    await resolverDisputa({
+      disputaId: disputa.id,
+      admin,
+      datos: {
+        favor: 'vendedor',
+        resolucion: 'El vendedor aporto la evidencia de entrega.',
+      },
+    });
+
+    const despues = await subPedidosElegiblesParaLiberar();
+    assert.ok(
+      despues.includes(pedido.subPedido.id),
+      'al cerrar la disputa sin reembolso, el reloj de retencion sigue y el sub-pedido vuelve a ser elegible',
+    );
+
+    const sub = await prisma.subPedido.findUnique({
+      where: { id: pedido.subPedido.id },
+    });
+    assert.equal(sub.estado, 'entregado');
+    assert.equal(sub.saldoLiberadoEn, null);
   });
 
   test('el job corre en la fecha correcta', cuandoAplique, () => {

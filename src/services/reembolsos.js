@@ -340,7 +340,7 @@ function lineasConPrecio(sub, lineas) {
   });
 }
 
-async function crearEnTx({
+export async function crearEnTx({
   tx,
   subPedidoId,
   entrada,
@@ -546,6 +546,14 @@ async function actualizarEstadoSubPedido(tx, sub, adminId) {
   });
 
   const reembolsado = lineas._sum.monto ?? 0n;
+
+  // Un sub-pedido cancelado (por ejemplo, una disputa sin entrega) sigue
+  // cancelado al completarse el reembolso: el reembolso explica el dinero,
+  // pero no revive un pedido que nunca se entrego.
+  if (sub.estado === 'cancelado') {
+    return { reembolsado, estadoNuevo: 'cancelado' };
+  }
+
   const estadoNuevo =
     reembolsado >= sub.subtotalProductos
       ? 'reembolsado'

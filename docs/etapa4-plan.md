@@ -340,16 +340,16 @@ Resolución del admin (`POST /admin/disputas/{id}/resolver`):
   - El reloj de retención sigue corriendo desde `fecha_entrega`; si ya venció, el próximo job libera.
 - A favor del comprador:
   - `disputa.estado = resuelta_comprador`.
-  - Se crea un `reembolso` por las líneas aprobadas (el admin manda líneas/cantidades; el backend calcula montos). Si corresponde devolver el envío, se suma `monto_envio` y también se descuenta del saldo del vendedor.
+  - Se crea un `reembolso` por las líneas aprobadas (el admin manda líneas/cantidades; el backend calcula montos con los precios congelados). Con entrega, el envío no se reembolsa. Sin entrega, se reembolsa todo, incluido el envío.
   - Digital: si hay saldo liberado, se congela lo reclamado hasta que el reembolso se complete o falle; si no se liberó, el job de liberación no libera ese sub-pedido. Si el saldo ya se pagó al vendedor, el reembolso descuenta lo disponible de `saldo_por_pagar` y el resto pasa a `saldo_deuda` (asientos `reembolso` + `deuda_reembolso`, ver 3.3).
-  - Efectivo: el vendedor debe reembolsar antes de `fecha_limite`; no se congela nada.
-  - El sub-pedido pasa a `reembolsado` o `reembolsado_parcial` cuando el reembolso se completa; mientras está pendiente sigue `en_disputa`.
-  - Si el reembolso falla, se alerta al admin y se reintenta; no se marca completado sin confirmación.
+  - Efectivo: el vendedor debe reembolsar antes de `fecha_limite = hoy + dias_reembolso_efectivo`; no se congela nada y la resolución no mueve el ledger. El job `job:reembolsos-efectivo-vencidos` lo pasa a `incumplido` al vencer y registra una sola `deuda_reembolso`.
+  - El sub-pedido pasa a `reembolsado` o `reembolsado_parcial` cuando el reembolso se completa; mientras está pendiente sigue `en_disputa`. Si no hubo entrega, sigue `cancelado` al completarse.
+  - Marcar el reembolso como fallido lo deja `fallido` y alerta al admin; no se marca completado sin confirmación.
 
 Stock en disputas:
 
-- Si **no hubo entrega** (`fecha_entrega` nula) y el comprador gana: se cancela el sub-pedido, se reembolsa el total (incluido envío) y se devuelve el stock con `devolverStock()` en la misma transacción, porque el vendedor conserva el producto.
-- Si **sí hubo entrega** y el comprador gana: el stock **no** se devuelve automáticamente. El producto puede estar en manos del comprador. Se devuelve solo cuando el admin registra "producto recibido" en una acción explícita, que llama a `devolverStock()` por línea y es idempotente. Sin esa acción, el stock queda como vendido.
+- Si **no hubo entrega** (`fecha_entrega` nula y `estado_sub_pedido_anterior` distinto de `entregado`) y el comprador gana: se cancela el sub-pedido, se reembolsa el total (incluido envío) y se devuelve el stock con `devolverStock()` en la misma transacción, porque el vendedor conserva el producto. La fila de `devolucion_stock` usa el origen `disputa_sin_entrega`.
+- Si **sí hubo entrega** y el comprador gana: el stock **no** se devuelve automáticamente. El producto puede estar en manos del comprador. Se devuelve solo con `POST /admin/sub-pedidos/{id}/producto-recibido`, que llama a `devolverStock()` por línea, exige la cantidad completa aprobada y es idempotente gracias al UNIQUE de `devolucion_stock`. La fila usa el origen `producto_recibido`. Sin esa acción, el stock queda como vendido.
 - Un reembolso parcial no devuelve stock automáticamente.
 
 ### 4.5 Estados del local por deuda
@@ -429,7 +429,7 @@ Todos los jobs son scripts independientes, se ejecutan con `npm run job:<nombre>
 |---|---|
 | `job:liberar-saldos` | Libera saldo de sub-pedidos elegibles |
 | `job:cancelar-efectivo-sin-aceptar` | Cancela efectivo vencido en `por_aceptar` |
-| `job:reembolsos-vencidos` | Marca incumplidos los reembolsos en efectivo vencidos y registra deuda |
+| `job:reembolsos-efectivo-vencidos` | Marca incumplidos los reembolsos en efectivo vencidos, registra una sola deuda y recalcula el local |
 | `job:auto-entregar` | Pasa a `entregado` los sub-pedidos con auto-entrega vencida |
 | `job:expirar-pagos` | Expira pagos digitales pendientes y libera stock |
 | `job:bloquear-locales-vencidos` | Bloquea locales con deuda vencida |
@@ -521,7 +521,7 @@ Todas bajo `/api/v1`, JSON snake_case, montos enteros, paginación estándar. Se
 | GET | `/admin/disputas?estado=` | admin | Lista |
 | GET | `/admin/disputas/{id}` | admin | Detalle |
 | POST | `/admin/disputas/{id}/resolver` | admin | Resuelve a favor de comprador/vendedor; `Idempotency-Key` |
-| POST | `/admin/disputas/{id}/producto-recibido` | admin | Devuelve stock de una disputa con entrega, por línea e idempotente |
+| POST | `/admin/sub-pedidos/{id}/producto-recibido` | admin | Devuelve stock de una disputa con entrega, por línea e idempotente; `Idempotency-Key` |
 | POST | `/admin/reembolsos/{id}/completar` | admin | Confirma reembolso manual/Wompi; `Idempotency-Key` |
 | POST | `/admin/reembolsos/{id}/fallar` | admin | Marca fallido y alerta |
 | POST | `/admin/pagos-deuda/{id}/confirmar` | admin | Confirma pago de deuda; `Idempotency-Key` |

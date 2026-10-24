@@ -32,7 +32,7 @@ export const ESTADO = estadoInvariante({
   aplica: 'parcial',
   etapa: 'Etapa 6',
   motivo:
-    'pedido, pago, reembolso, sub_pedido, detalle, ledger, cuenta_local y productos ya se protegen. Falta la retencion de datos.',
+    'pedido, pago, reembolso, sub_pedido, detalle, ledger, cuenta_local, productos y devoluciones de stock ya se protegen. Falta la retencion de datos.',
 });
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -53,10 +53,10 @@ const REGLA_BORRADO_AUDITORIA =
   /(auditoriaAdmin|auditoria_admin)\s*\.\s*(delete|deleteMany)\b|DELETE\s+FROM\s+"?auditoria_admin"?/i;
 
 const TABLAS_FINANCIERAS =
-  'pedido|pago|reembolso|ledger|sub_pedido|detalle_producto|cuenta_local';
+  'pedido|pago|reembolso|ledger|sub_pedido|detalle_producto|cuenta_local|devolucion_stock';
 
 const REGLA_BORRADO_FINANCIERO = new RegExp(
-  String.raw`(pedido|pago|reembolso|ledger|subPedido|sub_pedido|detalleProducto|detalle_producto|cuentaLocal|cuenta_local)\s*\.\s*(delete|deleteMany)\b|DELETE\s+FROM\s+"?(${TABLAS_FINANCIERAS})"?`,
+  String.raw`(pedido|pago|reembolso|ledger|subPedido|sub_pedido|detalleProducto|detalle_producto|cuentaLocal|cuenta_local|devolucionStock|devolucion_stock)\s*\.\s*(delete|deleteMany)\b|DELETE\s+FROM\s+"?(${TABLAS_FINANCIERAS})"?`,
   'i',
 );
 
@@ -166,6 +166,46 @@ describe('invariante 11 - nada financiero se borra', () => {
     await assert.rejects(
       () => prisma.detalleProducto.delete({ where: { id: detalle.id } }),
       /snapshots|no se modifican|no se borran|restrict/i,
+    );
+  });
+
+  test('una devolucion de stock no se modifica ni se borra', CON_BASE, async () => {
+    const { local, variante } = await crearCatalogo();
+    const { subPedido, detalle } = await crearPedidoDePrueba({
+      local,
+      variante,
+    });
+
+    const devolucion = await prisma.devolucionStock.create({
+      data: {
+        subPedidoId: subPedido.id,
+        detalleId: detalle.id,
+        cantidad: detalle.cantidad,
+        origen: 'producto_recibido',
+      },
+    });
+
+    await assert.rejects(
+      () =>
+        prisma.devolucionStock.delete({
+          where: { id: devolucion.id },
+        }),
+      /devolucion_stock_inmutable|inmutable|restrict/i,
+    );
+
+    await assert.rejects(
+      () =>
+        prisma.devolucionStock.update({
+          where: { id: devolucion.id },
+          data: { cantidad: 1 },
+        }),
+      /devolucion_stock_inmutable|inmutable|restrict/i,
+    );
+
+    assert.ok(
+      await prisma.devolucionStock.findUnique({
+        where: { id: devolucion.id },
+      }),
     );
   });
 

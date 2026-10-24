@@ -463,6 +463,88 @@ export const esquemaFiltrosDisputas = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Esquemas de validacion de la Etapa 4c-2b (resolucion y producto recibido)
+// ---------------------------------------------------------------------------
+
+const esquemaLineaResolucion = z.object({
+  detalle_id: z.coerce.number().int().positive(),
+  cantidad: z.coerce.number().int().min(1).max(999),
+});
+
+export const esquemaResolverDisputa = z
+  .object({
+    favor: z.enum(['comprador', 'vendedor']),
+    resolucion: z
+      .string()
+      .trim()
+      .min(1, 'La resolucion es obligatoria.')
+      .max(2000, 'La resolucion no puede superar 2000 caracteres.')
+      .optional(),
+    // Alias aceptado para clientes que llaman `motivo` al texto de la
+    // decision. No se guarda como motivo de la disputa original.
+    motivo: z
+      .string()
+      .trim()
+      .min(1, 'La resolucion es obligatoria.')
+      .max(2000, 'La resolucion no puede superar 2000 caracteres.')
+      .optional(),
+    lineas: z
+      .array(esquemaLineaResolucion)
+      .min(1, 'La resolucion necesita al menos una linea.')
+      .max(50, 'La resolucion no puede tener mas de 50 lineas.')
+      .optional(),
+    incluye_envio: z.boolean().optional().default(false),
+  })
+  .superRefine((datos, ctx) => {
+    if (!datos.resolucion && !datos.motivo) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['resolucion'],
+        message: 'La resolucion es obligatoria.',
+      });
+    }
+
+    const vistos = new Set();
+    for (const [indice, linea] of (datos.lineas ?? []).entries()) {
+      if (vistos.has(linea.detalle_id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['lineas', indice, 'detalle_id'],
+          message: 'No repitas la misma linea en la resolucion.',
+        });
+      }
+      vistos.add(linea.detalle_id);
+    }
+  });
+
+export const esquemaProductoRecibido = z
+  .object({
+    lineas: z
+      .array(
+        z.object({
+          detalle_id: z.coerce.number().int().positive(),
+          cantidad: z.coerce.number().int().min(1).max(999).optional(),
+        }),
+      )
+      .min(1, 'La confirmacion necesita al menos una linea.')
+      .max(50, 'La confirmacion no puede tener mas de 50 lineas.')
+      .optional(),
+  })
+  .superRefine((datos, ctx) => {
+    const vistos = new Set();
+    for (const [indice, linea] of (datos.lineas ?? []).entries()) {
+      if (vistos.has(linea.detalle_id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['lineas', indice, 'detalle_id'],
+          message: 'No repitas la misma linea en la confirmacion.',
+        });
+      }
+      vistos.add(linea.detalle_id);
+    }
+  });
+
+// ---------------------------------------------------------------------------
 // Esquemas de validacion de la Etapa 4c-2a (reembolsos por linea)
 // ---------------------------------------------------------------------------
 

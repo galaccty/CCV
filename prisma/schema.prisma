@@ -55,6 +55,7 @@ model Usuario {
   disputasResueltas     Disputa[]                  @relation("DisputaResuelta")
   evidenciasDisputa     DisputaEvidencia[]
   reembolsosRegistrados Reembolso[]               @relation("ReembolsoRegistrado")
+  devolucionesStock     DevolucionStock[]          @relation("DevolucionStockRegistrada")
 
   @@map("usuario")
 }
@@ -394,6 +395,7 @@ model SubPedido {
   movimientos Ledger[]
   reembolsos  Reembolso[]
   disputa     Disputa?
+  devolucionesStock DevolucionStock[]
 
   @@index([pedidoId])
   @@index([localId, estado])
@@ -412,6 +414,7 @@ model DetalleProducto {
   subPedido       SubPedido        @relation(fields: [subPedidoId], references: [id])
   variante        ProductoVariante @relation(fields: [varianteId], references: [id])
   lineasReembolso ReembolsoLinea[]
+  devolucionesStock DevolucionStock[]
 
   @@unique([subPedidoId, varianteId])
   @@index([varianteId])
@@ -592,6 +595,32 @@ model DisputaEvidencia {
   @@index([disputaId, creadoEn])
   @@index([usuarioId])
   @@map("disputa_evidencia")
+}
+
+// ---------------------------------------------------------------------------
+// Devoluciones de stock (Etapa 4c-2b)
+// ---------------------------------------------------------------------------
+
+/// Una linea de un sub-pedido solo puede devolverse al stock una vez. La fila
+/// es la prueba de idempotencia que comparten la resolucion sin entrega y la
+/// confirmacion de producto recibido.
+model DevolucionStock {
+  id            Int                   @id @default(autoincrement())
+  subPedidoId   Int                   @map("sub_pedido_id")
+  detalleId     Int                   @map("detalle_id")
+  cantidad      Int
+  origen        OrigenDevolucionStock
+  registradoPor Int?                  @map("registrado_por")
+  creadoEn      DateTime              @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  subPedido   SubPedido       @relation(fields: [subPedidoId], references: [id], onDelete: Restrict)
+  detalle     DetalleProducto @relation(fields: [detalleId], references: [id], onDelete: Restrict)
+  registrador Usuario?        @relation("DevolucionStockRegistrada", fields: [registradoPor], references: [id], onDelete: Restrict)
+
+  @@unique([subPedidoId, detalleId])
+  @@index([detalleId])
+  @@index([registradoPor])
+  @@map("devolucion_stock")
 }
 
 // ---------------------------------------------------------------------------
@@ -804,6 +833,13 @@ enum TipoEvidencia {
   url
 
   @@map("tipo_evidencia")
+}
+
+enum OrigenDevolucionStock {
+  disputa_sin_entrega
+  producto_recibido
+
+  @@map("origen_devolucion_stock")
 }
 
 enum MetodoPagoDeuda {

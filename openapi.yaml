@@ -2164,6 +2164,112 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/v1/admin/disputas/{id}/resolver:
+    post:
+      tags: [Disputas]
+      summary: Resolver una disputa a favor del comprador o del vendedor
+      description: |
+        Solo un admin puede resolver una disputa `abierta`, una sola vez. La
+        resolucion es inmutable: un segundo intento devuelve 409.
+
+        Si gana el vendedor, el sub-pedido vuelve al estado que tenia antes de
+        la disputa y se descongela el saldo retenido, si lo hay.
+
+        Si gana el comprador, se crea un reembolso `pendiente` con las lineas
+        aprobadas y los precios congelados. Nunca se aceptan montos del
+        cliente. Con entrega, el sub-pedido queda `en_disputa` hasta que el
+        reembolso se complete y el stock solo se devuelve cuando el admin
+        confirma que recibio el producto. Sin entrega, el sub-pedido se
+        cancela, se reembolsa todo (incluido el envio) y el stock se devuelve
+        en la misma transaccion.
+      operationId: resolverDisputaAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdDisputa'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolverDisputaRequest'
+      responses:
+        '200':
+          description: Disputa resuelta, con el reembolso asociado si lo hay
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Disputa'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: La disputa ya esta resuelta o la clave esta en proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Lineas, cantidades o envio no reembolsables
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/admin/sub-pedidos/{id}/producto-recibido:
+    post:
+      tags: [Admin]
+      summary: Confirmar que el producto de una disputa fue devuelto
+      description: |
+        Solo aplica a una disputa `resuelta_comprador` con entrega. Devuelve
+        al stock las lineas aprobadas, una sola vez por linea, y registra la
+        recepcion para auditoria. Si se omite `lineas`, se devuelven todas las
+        lineas del reembolso que aun no se hayan registrado. Repetir la
+        peticion no vuelve a sumar stock.
+      operationId: confirmarProductoRecibidoAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdSubPedido'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductoRecibidoRequest'
+      responses:
+        '200':
+          description: Lineas registradas y stock devuelto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductoRecibidoResultado'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: La disputa no permite devolver producto o la clave esta en proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Linea fuera del reembolso o cantidad invalida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/v1/admin/reembolsos/{id}/completar:
     post:
       tags: [Admin]
@@ -3935,6 +4041,108 @@ components:
         evidencia_inicial:
           $ref: '#/components/schemas/EvidenciaRequest'
 
+    ResolverDisputaRequest:
+      type: object
+      required: [favor]
+      additionalProperties: false
+      properties:
+        favor:
+          type: string
+          enum: [comprador, vendedor]
+          description: Lado a favor del cual se resuelve la disputa.
+        resolucion:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Explicacion de la decision del admin.
+        motivo:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Alias de `resolucion` aceptado por compatibilidad.
+        lineas:
+          type: array
+          minItems: 1
+          maxItems: 50
+          description: |
+            Requerido si gana el comprador y el sub-pedido fue entregado. Si
+            no hubo entrega se reembolsan todas las lineas y el envio.
+          items:
+            $ref: '#/components/schemas/LineaReclamadaRequest'
+        incluye_envio:
+          type: boolean
+          default: false
+          description: |
+            Solo se puede pedir si el sub-pedido no tiene entrega. Si no hubo
+            entrega, el backend siempre reembolsa el envio.
+      anyOf:
+        - required: [resolucion]
+        - required: [motivo]
+      example:
+        favor: comprador
+        resolucion: El producto llego en mal estado.
+        lineas:
+          - detalle_id: 12
+            cantidad: 1
+
+    ProductoRecibidoRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        lineas:
+          type: array
+          minItems: 1
+          maxItems: 50
+          description: |
+            Lineas que el admin recibio. Si se omite, se procesan todas las
+            lineas del reembolso que aun no tengan stock devuelto.
+          items:
+            type: object
+            required: [detalle_id]
+            additionalProperties: false
+            properties:
+              detalle_id:
+                type: integer
+                minimum: 1
+              cantidad:
+                type: integer
+                minimum: 1
+                maximum: 999
+                description: |
+                  Si se omite, se usa la cantidad completa aprobada para la
+                  linea. Una linea solo se devuelve una vez.
+
+    ProductoRecibidoLinea:
+      type: object
+      required: [id, detalle_id, variante_id, cantidad, origen, registrado_en]
+      properties:
+        id:
+          type: integer
+        detalle_id:
+          type: integer
+        variante_id:
+          type: integer
+        cantidad:
+          type: integer
+          minimum: 1
+        origen:
+          type: string
+          enum: [disputa_sin_entrega, producto_recibido]
+        registrado_en:
+          type: string
+          format: date-time
+
+    ProductoRecibidoResultado:
+      type: object
+      required: [sub_pedido_id, productos]
+      properties:
+        sub_pedido_id:
+          type: integer
+        productos:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductoRecibidoLinea'
+
     DisputaEvidencia:
       type: object
       required: [id, disputa_id, usuario_id, lado, tipo, contenido, creado_en]
@@ -4015,6 +4223,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DisputaEvidencia'
+        reembolso:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Reembolso'
+          description: |
+            Reembolso creado al resolver a favor del comprador. Null mientras
+            la disputa este abierta o si gano el vendedor.
 
     ListaDisputas:
       type: object

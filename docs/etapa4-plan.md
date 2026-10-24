@@ -255,6 +255,8 @@ Si el vendedor debe devolver 10.000 de producto (12.000 si el reembolso incluye 
 
 El reembolso en efectivo no mueve `saldo_por_pagar` porque la plataforma nunca tuvo ese dinero.
 
+**Decisión de negocio pendiente (9.2.3):** con el flujo actual, si el vendedor no paga el reembolso en efectivo, el comprador no recibe su dinero y la plataforma solo registra la deuda del vendedor. La propuesta es que el admin decida caso por caso si la plataforma adelanta el reembolso al comprador y recupera después ese monto con la deuda del vendedor. Mientras no se decida, no se escribe ninguna salida de plataforma.
+
 ### 3.6 Redondeo
 
 Si `subtotal_restante * porcentaje` da un residuo de 1 peso frente a la comisión objetivo, se registra `ajuste_redondeo` por 1 peso con dirección explícita y referencia al sub-pedido. La suma de `comision` + `reversa_comision` + `ajuste_redondeo` debe cuadrar con la comisión objetivo. Se prueba con varias líneas y residuos.
@@ -267,24 +269,27 @@ Si `subtotal_restante * porcentaje` da un residuo de 1 peso frente a la comisió
 
 Job `liberar_saldos` (script `npm run job:liberar-saldos`; frecuencia sugerida: cada hora, la programación se decide al desplegar). Cada job es un script independiente que abre su propia conexión, intenta `pg_try_advisory_lock(<clave fija por job>)` y sale sin hacer nada si otra instancia ya lo tiene. El candado se libera al cerrar la conexión.
 
-1. En una transacción, selecciona un lote acotado de `sub_pedido` con:
-   - estado `entregado` o `reembolsado_parcial`;
+1. Toma un lote acotado de IDs de `sub_pedido` con:
+   - estado `entregado` o `reembolsado_parcial`, y además `reembolsado` para cerrar un reembolso total previo (si el envío no se reembolsó, se libera solo el envío);
+   - solo pagos digitales: en efectivo el vendedor ya cobró y no hay saldo retenido que liberar;
    - `saldo_liberado_en IS NULL`;
    - `fecha_entrega + dias_retencion` (del `config_snapshot`) `<= ahora`;
    - sin `disputa` abierta;
    - sin `reembolso` pendiente;
    - local `suspendido` o `pendiente_aprobacion`: **sí se libera**. Suspender no borra la obligación de pagar; el admin decide después si incluye ese saldo en una liquidación (ver 4.2).
-2. Bloquea cada fila con `SELECT ... FOR UPDATE SKIP LOCKED` para que dos instancias no procesen la misma.
+2. Por cada fila, abre una transacción y la bloquea con `SELECT ... FOR UPDATE SKIP LOCKED`; dentro del lock vuelve a verificar que siga siendo elegible. Así dos instancias no procesan la misma.
 3. Calcula:
    - `liberacion = subtotal_productos + costo_envio - comision_original` (snapshot). El envío se acredita al vendedor; la comisión solo se calcula sobre productos.
    - reembolsos completados que aún no tengan asiento local: `reembolso` con `local_id`, incluida la parte de envío.
    - si la comisión objetivo es menor que la original: `reversa_comision` con `local_id` por la diferencia.
    - `ajuste_redondeo` si queda un peso.
-4. Ejecuta `registrarMovimiento()` para cada asiento y actualiza `saldo_liberado_en = ahora` con `UPDATE ... WHERE saldo_liberado_en IS NULL`.
+4. Ejecuta `registrarMovimiento()` para cada asiento y actualiza `saldo_liberado_en = ahora` con `UPDATE ... WHERE saldo_liberado_en IS NULL`, todo en la misma transacción.
 5. Si el neto es cero (todo reembolsado), marca `saldo_liberado_en` sin asiento; no hay dinero que mover.
-6. Commit. El trigger de la base vuelve a verificar que no haya reembolso pendiente ni disputa abierta.
+6. Commit. El trigger de la base vuelve a verificar que no haya reembolso pendiente ni disputa abierta. Un fallo en una fila no impide que el job procese las demás.
 
 El job es idempotente: la UNIQUE de `liberacion` por `sub_pedido` y el `UPDATE` condicionado impiden duplicados.
+
+**Doble reversa de comisión:** la reversa de comisión de la **plataforma** ya se registra al completar cada reembolso, con `local_id = NULL`. La liberación no vuelve a escribir ese asiento: solo escribe la `reversa_comision` **local** (`local_id` del vendedor) por `comision_original - comision_objetivo`. Así el ingreso neto de la plataforma queda en la comisión objetivo y el vendedor recibe su crédito una sola vez.
 
 ### 4.2 Liquidaciones
 
@@ -651,6 +656,7 @@ Orden elegido: primero las fundaciones, luego efectivo, luego disputas/reembolso
 
 1. **Comisión de Wompi.** Hoy `pago_recibido` registra el monto bruto y Wompi deposita el neto menos su comisión. La conciliación contra el ledger va a mostrar una diferencia igual a esa comisión. Falta decidir si se registra como gasto de plataforma (un tipo `comision_pasarela` o una tabla de gastos) o si la conciliación trabaja con bruto y neto por separado. Mientras no se decida, la conciliación reporta la diferencia y no la fuerza contra `cuenta_local`. No afecta el saldo del vendedor.
 2. **Cuenta bancaria del vendedor.** No existe todavía dónde guardar banco, tipo de cuenta, número, titular y documento. Hay que elegir entre campos en `local`, una tabla `cuenta_bancaria_local` con historial, o un token del proveedor de payout. Al definirla, la liquidación debe guardar un snapshot de la cuenta destino al preparar el pago para no transferir a una cuenta cambiada después.
+3. **Reembolso en efectivo vencido.** Cuando el vendedor no paga un reembolso en efectivo antes de `fecha_limite`, hoy el comprador no recibe su dinero: solo se registra la deuda del vendedor. Propuesta: que el admin decida caso por caso si la plataforma adelanta el reembolso al comprador y lo recupera después con la deuda del vendedor. Mientras no se decida, no se escribe una salida de plataforma; el job solo marca el reembolso `incumplido` y la deuda.
 
 ### 9.3 Decisiones que tomo por defecto (salvo que digas lo contrario)
 

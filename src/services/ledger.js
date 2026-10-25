@@ -33,9 +33,13 @@ import { aBigInt } from '../lib/dinero.js';
  *   - descongelacion: pasa saldo de congelado a por_pagar.
  *   - deuda_reembolso: suma saldo_deuda.
  *   - pago_a_local: descuenta saldo_por_pagar.
- *   - cobro_deuda: descuenta saldo_deuda.
+ *   - cobro_deuda: descuenta saldo_deuda. Si se usa para compensar dentro de
+ *     una liquidacion (`desdeLiquidacion`), tambien descuenta el
+ *     saldo_por_pagar que se esta liquidando: es la misma plata que deja de
+ *     estar disponible para pagar y se aplica a la deuda.
  *   - reversa_pago_a_local: devuelve saldo_por_pagar.
- *   - reversa_cobro_deuda: devuelve saldo_deuda.
+ *   - reversa_cobro_deuda: devuelve saldo_deuda. En una liquidacion fallida
+ *     (`desdeLiquidacion`) tambien repone el saldo_por_pagar compensado.
  *   - ajuste_redondeo: credito o debito explicito sobre la cuenta indicada.
  */
 
@@ -113,9 +117,15 @@ const EFECTOS = {
   liberacion: () => [efecto('saldoPorPagar', 1)],
   deuda_reembolso: () => [efecto('saldoDeuda', 1)],
   reversa_pago_a_local: () => [efecto('saldoPorPagar', 1)],
-  reversa_cobro_deuda: () => [efecto('saldoDeuda', 1)],
+  reversa_cobro_deuda: ({ desdeLiquidacion }) =>
+    desdeLiquidacion
+      ? [efecto('saldoDeuda', 1), efecto('saldoPorPagar', 1)]
+      : [efecto('saldoDeuda', 1)],
   pago_a_local: () => [efecto('saldoPorPagar', -1)],
-  cobro_deuda: () => [efecto('saldoDeuda', -1)],
+  cobro_deuda: ({ desdeLiquidacion }) =>
+    desdeLiquidacion
+      ? [efecto('saldoDeuda', -1), efecto('saldoPorPagar', -1)]
+      : [efecto('saldoDeuda', -1)],
   congelacion: () => [
     efecto('saldoPorPagar', -1),
     efecto('saldoCongelado', 1),
@@ -155,6 +165,8 @@ async function asegurarCuenta(tx, localId) {
  * @param {number|null} [datos.pagoDeudaId] pago de deuda que origino el cobro
  * @param {number|null} [datos.disputaId] disputa que origino congelacion/descongelacion
  * @param {boolean} [datos.desdeCongelado] reembolso contra saldo_congelado
+ * @param {boolean} [datos.desdeLiquidacion] la compensacion tambien debita el
+ *   saldo_por_pagar del lote; la reversa lo repone
  * @param {'credito'|'debito'} [datos.direccion] solo ajuste_redondeo
  * @param {'saldoDeuda'|'saldoPorPagar'|'saldoCongelado'} [datos.cuentaAjuste]
  */
@@ -168,6 +180,7 @@ export async function registrarMovimiento({
   pagoDeudaId = null,
   disputaId = null,
   desdeCongelado = false,
+  desdeLiquidacion = false,
   direccion = null,
   cuentaAjuste = 'saldoPorPagar',
 }) {
@@ -189,6 +202,10 @@ export async function registrarMovimiento({
     throw new Error('El campo desde_congelado debe ser booleano.');
   }
 
+  if (typeof desdeLiquidacion !== 'boolean') {
+    throw new Error('El campo desde_liquidacion debe ser booleano.');
+  }
+
   const montoBig = aBigInt(monto, 'monto');
   if (montoBig <= 0n) {
     throw new Error('El monto de un movimiento debe ser mayor que cero.');
@@ -205,6 +222,7 @@ export async function registrarMovimiento({
     localId: localIdNormalizado,
     subPedidoId: subPedidoIdNormalizado,
     desdeCongelado,
+    desdeLiquidacion,
     direccion,
     cuentaAjuste,
   });

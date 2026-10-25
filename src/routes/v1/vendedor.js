@@ -3,6 +3,8 @@ import * as subPedidos from '../../services/subPedidos.js';
 import * as vendedorCatalogo from '../../services/vendedorCatalogo.js';
 import * as pagoDeuda from '../../services/pagoDeuda.js';
 import * as cuentaLocal from '../../services/cuentaLocal.js';
+import * as cuentaBancaria from '../../services/cuentaBancaria.js';
+import * as liquidaciones from '../../services/liquidaciones.js';
 import * as disputas from '../../services/disputas.js';
 import { requiereRol } from '../../middlewares/sesion.js';
 import { idempotenciaRequerida } from '../../middlewares/idempotencia.js';
@@ -18,8 +20,10 @@ import {
   esquemaCrearVariante,
   esquemaAgregarEvidencia,
   esquemaFiltrosDisputas,
+  esquemaFiltrosLiquidaciones,
   esquemaFiltrosPagosDeuda,
   esquemaFiltrosProductos,
+  esquemaGuardarCuentaBancaria,
   esquemaIdPositivo,
   esquemaListaSubPedidos,
   esquemaLocalQuery,
@@ -101,6 +105,36 @@ router.patch('/locales/:id', requiereRol('vendedor'), async (req, res) => {
     }),
   );
 });
+
+router.get(
+  '/locales/:id/cuenta-bancaria',
+  requiereRol('vendedor'),
+  async (req, res) => {
+    const localId = esquemaIdPositivo.parse(req.params.id);
+    res.json(
+      await cuentaBancaria.obtenerCuentaBancariaVendedor({
+        usuario: req.usuario,
+        localId,
+      }),
+    );
+  },
+);
+
+router.put(
+  '/locales/:id/cuenta-bancaria',
+  requiereRol('vendedor'),
+  async (req, res) => {
+    const localId = esquemaIdPositivo.parse(req.params.id);
+    const datos = esquemaGuardarCuentaBancaria.parse(req.body);
+    res.json(
+      await cuentaBancaria.guardarCuentaBancariaVendedor({
+        usuario: req.usuario,
+        localId,
+        datos,
+      }),
+    );
+  },
+);
 
 router.post(
   '/locales/:id/subcategorias',
@@ -238,6 +272,39 @@ router.get('/movimientos', requiereRol('vendedor'), async (req, res) => {
     }),
   );
 });
+
+router.get(
+  '/liquidaciones',
+  requiereRol('vendedor'),
+  async (req, res) => {
+    const filtros = esquemaFiltrosLiquidaciones.parse(req.query);
+    const { pagina, porPagina } = leerPaginacion(req.query);
+
+    res.json(
+      await liquidaciones.listarLiquidacionesVendedor({
+        usuario: req.usuario,
+        localId: filtros.local_id,
+        estado: filtros.estado,
+        pagina,
+        porPagina,
+      }),
+    );
+  },
+);
+
+router.get(
+  '/liquidaciones/:id',
+  requiereRol('vendedor'),
+  async (req, res) => {
+    const id = esquemaIdPositivo.parse(req.params.id);
+    res.json(
+      await liquidaciones.obtenerLiquidacionVendedor({
+        usuario: req.usuario,
+        id,
+      }),
+    );
+  },
+);
 
 router.get('/deuda/pagos', async (req, res) => {
   const filtros = esquemaFiltrosPagosDeuda.parse(req.query);

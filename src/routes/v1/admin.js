@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as adminCatalogo from '../../services/adminCatalogo.js';
 import * as pagoDeuda from '../../services/pagoDeuda.js';
 import * as cuentaLocal from '../../services/cuentaLocal.js';
+import * as liquidaciones from '../../services/liquidaciones.js';
 import * as disputas from '../../services/disputas.js';
 import * as reembolsos from '../../services/reembolsos.js';
 import { requiereRol } from '../../middlewares/sesion.js';
@@ -11,9 +12,13 @@ import {
   esquemaActualizarRubro,
   esquemaCambiarEstadoLocal,
   esquemaCrearCategoriaGlobal,
+  esquemaCrearLiquidacion,
   esquemaCrearRubro,
   esquemaAgregarEvidencia,
+  esquemaConfirmarLiquidacion,
+  esquemaFallarLiquidacion,
   esquemaFiltrosDisputas,
+  esquemaFiltrosLiquidaciones,
   esquemaFiltrosLocales,
   esquemaIdPositivo,
   esquemaLocalQuery,
@@ -129,6 +134,107 @@ router.post(
       idempotenciaId: res.locals.idempotenciaId,
     });
     res.json(respuesta);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Liquidaciones y compensacion de deuda (Etapa 4e)
+// ---------------------------------------------------------------------------
+
+router.get('/liquidaciones', async (req, res) => {
+  const filtros = esquemaFiltrosLiquidaciones.parse(req.query);
+  const { pagina, porPagina } = leerPaginacion(req.query);
+
+  res.json(
+    await liquidaciones.listarLiquidacionesAdmin({
+      localId: filtros.local_id,
+      estado: filtros.estado,
+      pagina,
+      porPagina,
+    }),
+  );
+});
+
+router.post(
+  '/liquidaciones',
+  idempotenciaRequerida,
+  async (req, res) => {
+    const datos = esquemaCrearLiquidacion.parse(req.body);
+    const respuesta = await liquidaciones.crearLiquidacion({
+      admin: req.usuario,
+      datos,
+      idempotenciaId: res.locals.idempotenciaId,
+    });
+    res.status(201).json(respuesta);
+  },
+);
+
+router.get('/liquidaciones/:id', async (req, res) => {
+  const id = esquemaIdPositivo.parse(req.params.id);
+  res.json(await liquidaciones.obtenerLiquidacionAdmin({ id }));
+});
+
+router.post(
+  '/liquidaciones/:id/preparar',
+  idempotenciaRequerida,
+  async (req, res) => {
+    const id = esquemaIdPositivo.parse(req.params.id);
+    res.json(
+      await liquidaciones.prepararLiquidacion({
+        admin: req.usuario,
+        id,
+        idempotenciaId: res.locals.idempotenciaId,
+      }),
+    );
+  },
+);
+
+router.post(
+  '/liquidaciones/:id/confirmar',
+  idempotenciaRequerida,
+  async (req, res) => {
+    const id = esquemaIdPositivo.parse(req.params.id);
+    const datos = esquemaConfirmarLiquidacion.parse(req.body);
+    res.json(
+      await liquidaciones.confirmarLiquidacion({
+        admin: req.usuario,
+        id,
+        datos,
+        idempotenciaId: res.locals.idempotenciaId,
+      }),
+    );
+  },
+);
+
+router.post(
+  '/liquidaciones/:id/fallar',
+  idempotenciaRequerida,
+  async (req, res) => {
+    const id = esquemaIdPositivo.parse(req.params.id);
+    const datos = esquemaFallarLiquidacion.parse(req.body);
+    res.json(
+      await liquidaciones.fallarLiquidacion({
+        admin: req.usuario,
+        id,
+        datos,
+        idempotenciaId: res.locals.idempotenciaId,
+      }),
+    );
+  },
+);
+
+router.post(
+  '/liquidaciones/:id/cancelar',
+  idempotenciaRequerida,
+  async (req, res) => {
+    const id = esquemaIdPositivo.parse(req.params.id);
+    res.json(
+      await liquidaciones.cancelarLiquidacion({
+        admin: req.usuario,
+        id,
+        idempotenciaId: res.locals.idempotenciaId,
+      }),
+    );
   },
 );
 

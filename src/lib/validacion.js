@@ -585,3 +585,80 @@ export const esquemaCrearReembolso = z
       vistos.add(linea.detalle_id);
     });
   });
+
+// ---------------------------------------------------------------------------
+// Esquemas de validacion de la Etapa 4e (cuenta bancaria y liquidaciones)
+// ---------------------------------------------------------------------------
+
+const TIPOS_CUENTA_BANCARIA = ['ahorros', 'corriente'];
+const ESTADOS_LIQUIDACION = [
+  'borrador',
+  'en_proceso',
+  'pagada',
+  'fallida',
+  'cancelada',
+];
+
+export const esquemaGuardarCuentaBancaria = z.object({
+  banco: z
+    .string()
+    .trim()
+    .min(2, 'El banco es obligatorio.')
+    .max(100, 'El banco no puede superar 100 caracteres.'),
+  tipo_cuenta: z.enum(TIPOS_CUENTA_BANCARIA),
+  numero_cuenta: z
+    .string()
+    .trim()
+    .min(4, 'El numero de cuenta debe tener al menos 4 digitos.')
+    .max(32, 'El numero de cuenta no puede superar 32 digitos.')
+    .regex(/^[0-9]+$/, 'El numero de cuenta solo puede tener digitos.'),
+  titular: z
+    .string()
+    .trim()
+    .min(2, 'El titular es obligatorio.')
+    .max(160, 'El titular no puede superar 160 caracteres.'),
+  documento_titular: z
+    .string()
+    .trim()
+    .min(4, 'El documento del titular debe tener al menos 4 digitos.')
+    .max(30, 'El documento del titular no puede superar 30 digitos.')
+    .regex(/^[0-9]+$/, 'El documento del titular solo puede tener digitos.'),
+});
+
+export const esquemaCrearLiquidacion = z.object({
+  local_id: z.coerce.number().int().positive(),
+  confirmar_local_suspendido: z.boolean().optional().default(false),
+});
+
+export const esquemaConfirmarLiquidacion = z.object({
+  referencia_payout: z
+    .string()
+    .trim()
+    .min(1, 'La referencia del pago es obligatoria.')
+    .max(255, 'La referencia del pago no puede superar 255 caracteres.'),
+  comprobante_url: z
+    .string()
+    .trim()
+    .max(1000, 'La URL del comprobante no puede superar 1000 caracteres.')
+    .refine((valor) => {
+      try {
+        return new URL(valor).protocol === 'https:';
+      } catch {
+        return false;
+      }
+    }, 'La URL del comprobante debe usar https.')
+    .optional(),
+});
+
+export const esquemaFallarLiquidacion = z.object({
+  motivo_fallo: z
+    .string()
+    .trim()
+    .min(3, 'El motivo del fallo debe tener al menos 3 caracteres.')
+    .max(1000, 'El motivo del fallo no puede superar 1000 caracteres.'),
+});
+
+export const esquemaFiltrosLiquidaciones = z.object({
+  local_id: z.coerce.number().int().positive().optional(),
+  estado: z.enum(ESTADOS_LIQUIDACION).optional(),
+});

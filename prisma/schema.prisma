@@ -40,22 +40,25 @@ model Usuario {
   creadoEn        DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
   actualizadoEn   DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
 
-  roles                 UsuarioRol[]
-  tokens                TokenVerificacion[]
-  auditoria             AuditoriaAdmin[]
-  locales               Local[]
-  pedidos               Pedido[]
-  idempotencias         Idempotencia[]
-  historialSubPedido    HistorialEstadoSubPedido[]
-  carrito               Carrito?
-  direcciones           Direccion[]
-  pagosDeudaReportados  PagoDeuda[]                @relation("PagoDeudaReportado")
-  pagosDeudaConfirmados PagoDeuda[]                @relation("PagoDeudaConfirmado")
-  disputasComprador     Disputa[]                  @relation("DisputaComprador")
-  disputasResueltas     Disputa[]                  @relation("DisputaResuelta")
-  evidenciasDisputa     DisputaEvidencia[]
-  reembolsosRegistrados Reembolso[]               @relation("ReembolsoRegistrado")
-  devolucionesStock     DevolucionStock[]          @relation("DevolucionStockRegistrada")
+  roles                   UsuarioRol[]
+  tokens                  TokenVerificacion[]
+  auditoria               AuditoriaAdmin[]
+  locales                 Local[]
+  pedidos                 Pedido[]
+  idempotencias           Idempotencia[]
+  historialSubPedido      HistorialEstadoSubPedido[]
+  carrito                 Carrito?
+  direcciones             Direccion[]
+  pagosDeudaReportados    PagoDeuda[]                @relation("PagoDeudaReportado")
+  pagosDeudaConfirmados   PagoDeuda[]                @relation("PagoDeudaConfirmado")
+  disputasComprador       Disputa[]                  @relation("DisputaComprador")
+  disputasResueltas       Disputa[]                  @relation("DisputaResuelta")
+  evidenciasDisputa       DisputaEvidencia[]
+  reembolsosRegistrados   Reembolso[]                @relation("ReembolsoRegistrado")
+  devolucionesStock       DevolucionStock[]          @relation("DevolucionStockRegistrada")
+  liquidacionesCreadas    Liquidacion[]              @relation("LiquidacionCreada")
+  liquidacionesPreparadas Liquidacion[]              @relation("LiquidacionPreparada")
+  liquidacionesPagadas    Liquidacion[]              @relation("LiquidacionPagada")
 
   @@map("usuario")
 }
@@ -184,23 +187,30 @@ model Rubro {
 }
 
 model Local {
-  id                     Int          @id @default(autoincrement())
-  usuarioId              Int          @map("usuario_id")
-  rubroId                Int          @map("rubro_id")
-  nombre                 String       @db.VarChar(160)
-  logoUrl                String?      @map("logo_url") @db.Text
-  bannerFondoUrl         String?      @map("banner_fondo_url") @db.Text
-  latitud                Float
-  longitud               Float
-  estado                 EstadoLocal  @default(pendiente_aprobacion)
+  id                      Int                 @id @default(autoincrement())
+  usuarioId               Int                 @map("usuario_id")
+  rubroId                 Int                 @map("rubro_id")
+  nombre                  String              @db.VarChar(160)
+  logoUrl                 String?             @map("logo_url") @db.Text
+  bannerFondoUrl          String?             @map("banner_fondo_url") @db.Text
+  latitud                 Float
+  longitud                Float
+  estado                  EstadoLocal         @default(pendiente_aprobacion)
   // Estado que tenia el local cuando el admin lo suspendio. Al reactivarlo,
   // recalcular_estado_local() usa este dato para no perdonar una deuda que ya
   // habia llevado al local a bloqueado/en_plazo.
-  estadoPrevioSuspension EstadoLocal? @map("estado_previo_suspension")
-  promedioCalificacion   Float        @default(0) @map("promedio_calificacion")
-  totalCalificaciones    Int          @default(0) @map("total_calificaciones")
-  creadoEn               DateTime     @default(now()) @map("creado_en") @db.Timestamptz(3)
-  actualizadoEn          DateTime     @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  estadoPrevioSuspension  EstadoLocal?        @map("estado_previo_suspension")
+  promedioCalificacion    Float               @default(0) @map("promedio_calificacion")
+  totalCalificaciones     Int                 @default(0) @map("total_calificaciones")
+  // Cuenta bancaria del vendedor. El numero y el documento del titular se
+  // guardan cifrados por la aplicacion (AES-256-GCM); nunca en claro.
+  banco                   String?             @db.VarChar(100)
+  tipoCuentaBancaria      TipoCuentaBancaria? @map("tipo_cuenta_bancaria")
+  numeroCuentaCifrado     String?             @map("numero_cuenta_cifrado") @db.Text
+  titularCuenta           String?             @map("titular_cuenta") @db.VarChar(160)
+  documentoTitularCifrado String?             @map("documento_titular_cifrado") @db.Text
+  creadoEn                DateTime            @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn           DateTime            @updatedAt @map("actualizado_en") @db.Timestamptz(3)
 
   usuario       Usuario             @relation(fields: [usuarioId], references: [id])
   rubro         Rubro               @relation(fields: [rubroId], references: [id])
@@ -210,6 +220,7 @@ model Local {
   cuenta        CuentaLocal?
   movimientos   Ledger[]
   pagosDeuda    PagoDeuda[]
+  liquidaciones Liquidacion[]
 
   @@index([usuarioId])
   @@index([rubroId])
@@ -388,13 +399,13 @@ model SubPedido {
   creadoEn             DateTime              @default(now()) @map("creado_en") @db.Timestamptz(3)
   actualizadoEn        DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
 
-  pedido      Pedido                     @relation(fields: [pedidoId], references: [id])
-  local       Local                      @relation(fields: [localId], references: [id])
-  detalles    DetalleProducto[]
-  historial   HistorialEstadoSubPedido[]
-  movimientos Ledger[]
-  reembolsos  Reembolso[]
-  disputa     Disputa?
+  pedido            Pedido                     @relation(fields: [pedidoId], references: [id])
+  local             Local                      @relation(fields: [localId], references: [id])
+  detalles          DetalleProducto[]
+  historial         HistorialEstadoSubPedido[]
+  movimientos       Ledger[]
+  reembolsos        Reembolso[]
+  disputa           Disputa?
   devolucionesStock DevolucionStock[]
 
   @@index([pedidoId])
@@ -411,9 +422,9 @@ model DetalleProducto {
   cantidad          Int
   precioUnitario    BigInt @map("precio_unitario")
 
-  subPedido       SubPedido        @relation(fields: [subPedidoId], references: [id])
-  variante        ProductoVariante @relation(fields: [varianteId], references: [id])
-  lineasReembolso ReembolsoLinea[]
+  subPedido         SubPedido         @relation(fields: [subPedidoId], references: [id])
+  variante          ProductoVariante  @relation(fields: [varianteId], references: [id])
+  lineasReembolso   ReembolsoLinea[]
   devolucionesStock DevolucionStock[]
 
   @@unique([subPedidoId, varianteId])
@@ -520,12 +531,12 @@ model Reembolso {
   fecha          DateTime        @default(now()) @db.Timestamptz(3)
   actualizadoEn  DateTime        @updatedAt @map("actualizado_en") @db.Timestamptz(3)
 
-  pago         Pago              @relation(fields: [pagoId], references: [id])
-  subPedido    SubPedido         @relation(fields: [subPedidoId], references: [id])
-  disputa      Disputa?          @relation(fields: [disputaId], references: [id], onDelete: Restrict)
-  registrador  Usuario?          @relation("ReembolsoRegistrado", fields: [registradoPor], references: [id], onDelete: Restrict)
-  lineas       ReembolsoLinea[]
-  movimientos  Ledger[]
+  pago        Pago             @relation(fields: [pagoId], references: [id])
+  subPedido   SubPedido        @relation(fields: [subPedidoId], references: [id])
+  disputa     Disputa?         @relation(fields: [disputaId], references: [id], onDelete: Restrict)
+  registrador Usuario?         @relation("ReembolsoRegistrado", fields: [registradoPor], references: [id], onDelete: Restrict)
+  lineas      ReembolsoLinea[]
+  movimientos Ledger[]
 
   @@index([pagoId])
   @@index([subPedidoId])
@@ -639,12 +650,14 @@ model Ledger {
   monto       BigInt
   fecha       DateTime       @default(now()) @db.Timestamptz(3)
 
-  local     Local?     @relation(fields: [localId], references: [id], onDelete: Restrict)
-  subPedido SubPedido? @relation(fields: [subPedidoId], references: [id], onDelete: Restrict)
-  pago      Pago?      @relation(fields: [pagoId], references: [id], onDelete: Restrict)
-  reembolso Reembolso? @relation(fields: [reembolsoId], references: [id], onDelete: Restrict)
-  pagoDeuda PagoDeuda? @relation(fields: [pagoDeudaId], references: [id], onDelete: Restrict)
-  disputa   Disputa?   @relation(fields: [disputaId], references: [id], onDelete: Restrict)
+  local                   Local?                  @relation(fields: [localId], references: [id], onDelete: Restrict)
+  subPedido               SubPedido?              @relation(fields: [subPedidoId], references: [id], onDelete: Restrict)
+  pago                    Pago?                   @relation(fields: [pagoId], references: [id], onDelete: Restrict)
+  reembolso               Reembolso?              @relation(fields: [reembolsoId], references: [id], onDelete: Restrict)
+  pagoDeuda               PagoDeuda?              @relation(fields: [pagoDeudaId], references: [id], onDelete: Restrict)
+  disputa                 Disputa?                @relation(fields: [disputaId], references: [id], onDelete: Restrict)
+  liquidaciones           LiquidacionMovimiento[]
+  liquidacionesComoOrigen LiquidacionMovimiento[] @relation("MovimientoOrigen")
 
   // liquidacion_id llega en la Etapa 4, cuando exista la tabla liquidacion.
   @@index([localId, fecha])
@@ -697,6 +710,67 @@ model CuentaLocal {
   local Local @relation(fields: [localId], references: [id])
 
   @@map("cuenta_local")
+}
+
+// ---------------------------------------------------------------------------
+// Liquidaciones y compensacion de deuda (Etapa 4e)
+// ---------------------------------------------------------------------------
+
+model Liquidacion {
+  id                             Int                   @id @default(autoincrement())
+  localId                        Int                   @map("local_id")
+  estado                         EstadoLiquidacion     @default(borrador)
+  fechaCreacion                  DateTime              @default(now()) @map("fecha_creacion") @db.Timestamptz(3)
+  fechaPreparacion               DateTime?             @map("fecha_preparacion") @db.Timestamptz(3)
+  fechaPago                      DateTime?             @map("fecha_pago") @db.Timestamptz(3)
+  montoLiberado                  BigInt                @default(0) @map("monto_liberado")
+  montoReembolsado               BigInt                @default(0) @map("monto_reembolsado")
+  montoCompensado                BigInt                @default(0) @map("monto_compensado")
+  totalPagado                    BigInt                @default(0) @map("total_pagado")
+  referenciaPayout               String?               @unique @map("referencia_payout") @db.VarChar(255)
+  metodoPago                     MetodoPagoLiquidacion @default(transferencia) @map("metodo_pago")
+  comprobanteUrl                 String?               @map("comprobante_url") @db.Text
+  creadoPor                      Int                   @map("creado_por")
+  preparadoPor                   Int?                  @map("preparado_por")
+  pagadoPor                      Int?                  @map("pagado_por")
+  motivoFallo                    String?               @map("motivo_fallo") @db.Text
+  // Snapshot de la cuenta destino al preparar. El numero y el documento
+  // siguen cifrados; el snapshot no puede quedar en claro.
+  bancoDestino                   String?               @map("banco_destino") @db.VarChar(100)
+  tipoCuentaDestino              TipoCuentaBancaria?   @map("tipo_cuenta_destino")
+  numeroCuentaDestinoCifrado     String?               @map("numero_cuenta_destino_cifrado") @db.Text
+  titularDestino                 String?               @map("titular_destino") @db.VarChar(160)
+  documentoTitularDestinoCifrado String?               @map("documento_titular_destino_cifrado") @db.Text
+
+  local       Local                   @relation(fields: [localId], references: [id], onDelete: Restrict)
+  creador     Usuario                 @relation("LiquidacionCreada", fields: [creadoPor], references: [id], onDelete: Restrict)
+  preparador  Usuario?                @relation("LiquidacionPreparada", fields: [preparadoPor], references: [id], onDelete: Restrict)
+  pagador     Usuario?                @relation("LiquidacionPagada", fields: [pagadoPor], references: [id], onDelete: Restrict)
+  movimientos LiquidacionMovimiento[]
+
+  @@index([localId, fechaCreacion])
+  @@index([estado])
+  @@index([creadoPor])
+  @@index([preparadoPor])
+  @@index([pagadoPor])
+  @@map("liquidacion")
+}
+
+model LiquidacionMovimiento {
+  liquidacionId  Int                      @map("liquidacion_id")
+  ledgerId       Int                      @map("ledger_id")
+  rol            RolLiquidacionMovimiento
+  ledgerOrigenId Int?                     @map("ledger_origen_id")
+
+  liquidacion  Liquidacion @relation(fields: [liquidacionId], references: [id], onDelete: Restrict)
+  ledger       Ledger      @relation(fields: [ledgerId], references: [id], onDelete: Restrict)
+  ledgerOrigen Ledger?     @relation("MovimientoOrigen", fields: [ledgerOrigenId], references: [id], onDelete: Restrict)
+
+  @@id([liquidacionId, ledgerId])
+  @@index([ledgerId])
+  @@index([ledgerOrigenId])
+  @@index([rol])
+  @@map("liquidacion_movimiento")
 }
 
 // ---------------------------------------------------------------------------
@@ -877,4 +951,39 @@ enum TipoMovimiento {
   reversa_cobro_deuda
 
   @@map("tipo_movimiento")
+}
+
+enum TipoCuentaBancaria {
+  ahorros
+  corriente
+
+  @@map("tipo_cuenta_bancaria")
+}
+
+enum EstadoLiquidacion {
+  borrador
+  en_proceso
+  pagada
+  fallida
+  cancelada
+
+  @@map("estado_liquidacion")
+}
+
+enum MetodoPagoLiquidacion {
+  transferencia
+  manual
+
+  @@map("metodo_pago_liquidacion")
+}
+
+enum RolLiquidacionMovimiento {
+  liberacion
+  reembolso
+  compensacion
+  pago
+  reversa_cobro_deuda
+  reversa_pago_a_local
+
+  @@map("rol_liquidacion_movimiento")
 }

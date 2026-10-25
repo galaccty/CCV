@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Centro Comercial Virtual - API
-  version: 0.6.0
+  version: 0.7.0
   description: |
     Contrato de la API del backend. Es la fuente de verdad: las rutas se
     implementan después de quedar documentadas aquí.
@@ -21,6 +21,11 @@ info:
     Etapa 3c: autenticación y CSRF documentados, carrito con local y foto
     principal, y cuenta del comprador (perfil, cambio de contraseña y reenvío
     de la verificación del correo).
+
+    Etapa 4e: cuenta bancaria cifrada del local (AES-256-GCM), liquidaciones
+    admin/vendedor, compensación de deuda solo al preparar y reversas al
+    fallar. El número de cuenta y el documento solo se muestran completos al
+    admin en el detalle de una liquidación.
 
     CORS: el backend solo responde con credenciales al origen configurado en
     `CORS_ORIGINS`. Las coordenadas de las direcciones llegan desde el
@@ -2345,6 +2350,365 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/v1/vendedor/locales/{id}/cuenta-bancaria:
+    get:
+      tags: [Vendedor]
+      summary: Consultar la cuenta bancaria del local
+      description: |
+        Devuelve los datos bancarios registrados por el vendedor. El número de
+        cuenta y el documento del titular siempre se enmascaran; el dato
+        completo solo lo puede ver un admin en el detalle de una liquidación.
+      operationId: obtenerCuentaBancariaVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocal'
+      responses:
+        '200':
+          description: Datos bancarios del local
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CuentaBancaria'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+    put:
+      tags: [Vendedor]
+      summary: Registrar o reemplazar la cuenta bancaria del local
+      description: |
+        Guarda el banco, tipo de cuenta, número, titular y documento del
+        titular. El número y el documento se cifran con AES-256-GCM antes de
+        persistirse. La respuesta solo devuelve los valores enmascarados.
+      operationId: guardarCuentaBancariaVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLocal'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GuardarCuentaBancariaRequest'
+      responses:
+        '200':
+          description: Datos bancarios guardados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CuentaBancaria'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/liquidaciones:
+    get:
+      tags: [Admin]
+      summary: Listar liquidaciones
+      description: |
+        Lista las liquidaciones de todos los locales. Los datos bancarios de la
+        cuenta destino siempre salen enmascarados en la lista.
+      operationId: listarLiquidacionesAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: local_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoLiquidacion'
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Lista paginada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaLiquidaciones'
+        '403':
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [Admin]
+      summary: Crear una liquidación en borrador
+      description: |
+        Bloquea la cuenta del local y calcula la vista previa de montos. No
+        mueve el ledger. Solo puede existir una liquidación abierta
+        (`borrador` o `en_proceso`) por local. El cliente no envía montos.
+        Si el local está `suspendido`, se debe enviar
+        `confirmar_local_suspendido = true`.
+      operationId: crearLiquidacion
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearLiquidacionRequest'
+      responses:
+        '201':
+          description: Liquidación creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: Ya hay una liquidación abierta, no hay saldo liquidable o falta confirmar el local suspendido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/admin/liquidaciones/{id}:
+    get:
+      tags: [Admin]
+      summary: Detalle de una liquidación
+      description: |
+        El admin ve el número de cuenta y el documento completos solo en este
+        detalle. Si la liquidación ya fue preparada, se muestran los datos del
+        snapshot; si sigue en borrador, los datos actuales del local.
+      operationId: obtenerLiquidacionAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLiquidacion'
+      responses:
+        '200':
+          description: Detalle con movimientos enlazados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/liquidaciones/{id}/preparar:
+    post:
+      tags: [Admin]
+      summary: Preparar el pago de una liquidación
+      description: |
+        Revalida los saldos y reembolsos/disputas, fija los montos, escribe
+        `cobro_deuda` y `pago_a_local`, guarda el snapshot de la cuenta
+        bancaria y pasa la liquidación a `en_proceso`. Si algo cambió desde la
+        creación del borrador, responde 409 y hay que crear otro borrador.
+      operationId: prepararLiquidacion
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLiquidacion'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Liquidación en proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: La liquidación no está en borrador, los saldos cambiaron o falta la cuenta bancaria
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/admin/liquidaciones/{id}/confirmar:
+    post:
+      tags: [Admin]
+      summary: Confirmar el pago de una liquidación
+      description: |
+        Solo permite `en_proceso -> pagada`. Guarda la referencia, el
+        comprobante y la fecha. No escribe movimientos de ledger.
+      operationId: confirmarLiquidacion
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLiquidacion'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmarLiquidacionRequest'
+      responses:
+        '200':
+          description: Liquidación pagada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: La liquidación no está en proceso o la referencia ya existe
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/admin/liquidaciones/{id}/fallar:
+    post:
+      tags: [Admin]
+      summary: Marcar como fallida una liquidación en proceso
+      description: |
+        Solo permite `en_proceso -> fallida`. Escribe `reversa_cobro_deuda` y
+        `reversa_pago_a_local` por los montos de la preparación, enlazadas con
+        su movimiento original. La cuenta del local vuelve al estado previo.
+      operationId: fallarLiquidacion
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLiquidacion'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FallarLiquidacionRequest'
+      responses:
+        '200':
+          description: Liquidación fallida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: La liquidación no está en proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/admin/liquidaciones/{id}/cancelar:
+    post:
+      tags: [Admin]
+      summary: Cancelar una liquidación en borrador
+      description: Solo permite `borrador -> cancelada`. No mueve dinero.
+      operationId: cancelarLiquidacion
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLiquidacion'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Liquidación cancelada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: La liquidación no está en borrador
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/vendedor/liquidaciones:
+    get:
+      tags: [Vendedor]
+      summary: Listar las liquidaciones del vendedor
+      description: |
+        Lista las liquidaciones de los locales del vendedor autenticado. La
+        cuenta destino sale enmascarada.
+      operationId: listarLiquidacionesVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: local_id
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoLiquidacion'
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Lista paginada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaLiquidaciones'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vendedor/liquidaciones/{id}:
+    get:
+      tags: [Vendedor]
+      summary: Detalle de una liquidación propia
+      description: |
+        Solo el vendedor dueño del local puede verla. Los datos bancarios
+        salen enmascarados.
+      operationId: obtenerLiquidacionVendedor
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdLiquidacion'
+      responses:
+        '200':
+          description: Liquidación con sus movimientos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
 components:
   securitySchemes:
     cookieSesion:
@@ -2429,6 +2793,13 @@ components:
       in: path
       required: true
       description: Identificador del reembolso.
+      schema:
+        type: integer
+    IdLiquidacion:
+      name: id
+      in: path
+      required: true
+      description: Identificador de la liquidación.
       schema:
         type: integer
     IdProducto:
@@ -4381,3 +4752,266 @@ components:
         sent_at:
           type: string
           format: date-time
+
+    TipoCuentaBancaria:
+      type: string
+      enum: [ahorros, corriente]
+
+    EstadoLiquidacion:
+      type: string
+      enum: [borrador, en_proceso, pagada, fallida, cancelada]
+
+    MetodoPagoLiquidacion:
+      type: string
+      enum: [transferencia, manual]
+
+    RolLiquidacionMovimiento:
+      type: string
+      enum:
+        - liberacion
+        - reembolso
+        - compensacion
+        - pago
+        - reversa_cobro_deuda
+        - reversa_pago_a_local
+
+    CuentaBancaria:
+      type: object
+      required:
+        - local_id
+        - banco
+        - tipo_cuenta
+        - numero_cuenta_enmascarado
+        - titular
+        - documento_titular_enmascarado
+        - completa
+      properties:
+        local_id:
+          type: integer
+        banco:
+          type: string
+          nullable: true
+        tipo_cuenta:
+          allOf:
+            - $ref: '#/components/schemas/TipoCuentaBancaria'
+          nullable: true
+        numero_cuenta_enmascarado:
+          type: string
+          nullable: true
+          description: Siempre enmascarado; nunca se devuelve el número completo.
+          example: '****1234'
+        titular:
+          type: string
+          nullable: true
+        documento_titular_enmascarado:
+          type: string
+          nullable: true
+          description: Siempre enmascarado; nunca se devuelve completo.
+          example: '****5678'
+        completa:
+          type: boolean
+          description: Verdadero solo cuando están los cinco datos.
+        actualizado_en:
+          type: string
+          format: date-time
+
+    GuardarCuentaBancariaRequest:
+      type: object
+      additionalProperties: false
+      required: [banco, tipo_cuenta, numero_cuenta, titular, documento_titular]
+      properties:
+        banco:
+          type: string
+          minLength: 2
+          maxLength: 100
+        tipo_cuenta:
+          $ref: '#/components/schemas/TipoCuentaBancaria'
+        numero_cuenta:
+          type: string
+          minLength: 4
+          maxLength: 32
+          pattern: '^[0-9]+$'
+          description: Se cifra antes de guardarse y nunca se registra en logs.
+        titular:
+          type: string
+          minLength: 2
+          maxLength: 160
+        documento_titular:
+          type: string
+          minLength: 4
+          maxLength: 30
+          pattern: '^[0-9]+$'
+          description: Se cifra antes de guardarse y nunca se registra en logs.
+
+    LiquidacionCuentaDestino:
+      type: object
+      required:
+        - banco
+        - tipo_cuenta
+        - numero_cuenta_enmascarado
+        - titular
+        - documento_titular_enmascarado
+      properties:
+        banco:
+          type: string
+          nullable: true
+        tipo_cuenta:
+          allOf:
+            - $ref: '#/components/schemas/TipoCuentaBancaria'
+          nullable: true
+        numero_cuenta:
+          type: string
+          nullable: true
+          description: |
+            Número completo. Solo aparece en el detalle de admin y solo cuando
+            la liquidación ya tiene snapshot o está en borrador.
+        numero_cuenta_enmascarado:
+          type: string
+          nullable: true
+        titular:
+          type: string
+          nullable: true
+        documento_titular:
+          type: string
+          nullable: true
+          description: Documento completo, solo en el detalle de admin.
+        documento_titular_enmascarado:
+          type: string
+          nullable: true
+
+    LiquidacionMovimiento:
+      type: object
+      required: [ledger_id, rol, tipo, monto, fecha]
+      properties:
+        ledger_id:
+          type: integer
+        rol:
+          $ref: '#/components/schemas/RolLiquidacionMovimiento'
+        ledger_origen_id:
+          type: integer
+          nullable: true
+          description: Movimiento original que la reversa deja sin efecto.
+        tipo:
+          type: string
+        monto:
+          type: integer
+        fecha:
+          type: string
+          format: date-time
+
+    Liquidacion:
+      type: object
+      required:
+        - id
+        - local_id
+        - estado
+        - fecha_creacion
+        - monto_liberado
+        - monto_reembolsado
+        - monto_compensado
+        - total_pagado
+        - metodo_pago
+      properties:
+        id:
+          type: integer
+        local_id:
+          type: integer
+        estado:
+          $ref: '#/components/schemas/EstadoLiquidacion'
+        fecha_creacion:
+          type: string
+          format: date-time
+        fecha_preparacion:
+          type: string
+          format: date-time
+          nullable: true
+        fecha_pago:
+          type: string
+          format: date-time
+          nullable: true
+        monto_liberado:
+          type: integer
+          description: Saldo bruto cubierto por el lote, antes de reembolsos.
+        monto_reembolsado:
+          type: integer
+          description: Reembolsos locales ya aplicados contra saldo liberado.
+        monto_compensado:
+          type: integer
+          description: Deuda compensada en la preparación; no se transfiere.
+        total_pagado:
+          type: integer
+          description: Dinero que sale de la plataforma; puede ser 0 si todo se compensó.
+        referencia_payout:
+          type: string
+          nullable: true
+        metodo_pago:
+          $ref: '#/components/schemas/MetodoPagoLiquidacion'
+        comprobante_url:
+          type: string
+          nullable: true
+        creado_por:
+          type: integer
+        preparado_por:
+          type: integer
+          nullable: true
+        pagado_por:
+          type: integer
+          nullable: true
+        motivo_fallo:
+          type: string
+          nullable: true
+        cuenta_destino:
+          allOf:
+            - $ref: '#/components/schemas/LiquidacionCuentaDestino'
+          nullable: true
+        movimientos:
+          type: array
+          items:
+            $ref: '#/components/schemas/LiquidacionMovimiento'
+
+    ListaLiquidaciones:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Liquidacion'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
+
+    CrearLiquidacionRequest:
+      type: object
+      additionalProperties: false
+      required: [local_id]
+      properties:
+        local_id:
+          type: integer
+        confirmar_local_suspendido:
+          type: boolean
+          default: false
+          description: Obligatorio en true para crear una liquidación de un local suspendido.
+
+    ConfirmarLiquidacionRequest:
+      type: object
+      additionalProperties: false
+      required: [referencia_payout]
+      properties:
+        referencia_payout:
+          type: string
+          minLength: 1
+          maxLength: 255
+        comprobante_url:
+          type: string
+          maxLength: 1000
+          description: URL HTTPS del comprobante, si existe.
+
+    FallarLiquidacionRequest:
+      type: object
+      additionalProperties: false
+      required: [motivo_fallo]
+      properties:
+        motivo_fallo:
+          type: string
+          minLength: 3
+          maxLength: 1000

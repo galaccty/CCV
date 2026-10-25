@@ -46,6 +46,10 @@ process.env.NODE_ENV = 'test';
 process.env.SESSION_SECRET = 'secreto-de-pruebas-0123456789abcdef';
 process.env.SESSION_COOKIE_SECURE = 'false';
 
+// Clave fija de 32 bytes para el cifrado bancario de las pruebas.
+process.env.CUENTA_BANCARIA_ENCRYPTION_KEY =
+  'SkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSko=';
+
 // El proveedor de consola escribe en pantalla y arruinaria la salida de las
 // pruebas. El de prueba guarda los mensajes para poder leerlos.
 process.env.MAIL_DRIVER = 'ninguno';

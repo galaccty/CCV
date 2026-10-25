@@ -12,6 +12,7 @@ import {
   crearPagoDePrueba,
   crearReembolsoDePrueba,
   crearMovimientoDePrueba,
+  crearUsuarioDirecto,
 } from '../helpers/datos.js';
 
 /**
@@ -32,7 +33,7 @@ export const ESTADO = estadoInvariante({
   aplica: 'parcial',
   etapa: 'Etapa 6',
   motivo:
-    'pedido, pago, reembolso, sub_pedido, detalle, ledger, cuenta_local, productos y devoluciones de stock ya se protegen. Falta la retencion de datos.',
+    'pedido, pago, reembolso, sub_pedido, detalle, ledger, cuenta_local, liquidaciones, productos y devoluciones de stock ya se protegen. Falta la retencion de datos.',
 });
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -53,10 +54,10 @@ const REGLA_BORRADO_AUDITORIA =
   /(auditoriaAdmin|auditoria_admin)\s*\.\s*(delete|deleteMany)\b|DELETE\s+FROM\s+"?auditoria_admin"?/i;
 
 const TABLAS_FINANCIERAS =
-  'pedido|pago|reembolso|ledger|sub_pedido|detalle_producto|cuenta_local|devolucion_stock';
+  'pedido|pago|reembolso|ledger|sub_pedido|detalle_producto|cuenta_local|devolucion_stock|liquidacion|liquidacion_movimiento';
 
 const REGLA_BORRADO_FINANCIERO = new RegExp(
-  String.raw`(pedido|pago|reembolso|ledger|subPedido|sub_pedido|detalleProducto|detalle_producto|cuentaLocal|cuenta_local|devolucionStock|devolucion_stock)\s*\.\s*(delete|deleteMany)\b|DELETE\s+FROM\s+"?(${TABLAS_FINANCIERAS})"?`,
+  String.raw`(pedido|pago|reembolso|ledger|subPedido|sub_pedido|detalleProducto|detalle_producto|cuentaLocal|cuenta_local|devolucionStock|devolucion_stock|liquidacion|liquidacionMovimiento|liquidacion_movimiento)\s*\.\s*(delete|deleteMany)\b|DELETE\s+FROM\s+"?(${TABLAS_FINANCIERAS})"?`,
   'i',
 );
 
@@ -221,6 +222,82 @@ describe('invariante 11 - nada financiero se borra', () => {
     await assert.rejects(
       () => prisma.ledger.update({ where: { id: movimiento.id }, data: { monto: 1 } }),
       /inmutable|no se actualiza|invariante 11/i,
+    );
+  });
+
+  test('una liquidacion y sus movimientos no se borran ni se modifican', CON_BASE, async () => {
+    const { local } = await crearCatalogo();
+    const admin = await crearUsuarioDirecto({
+      nombre: 'Admin invariante 11',
+      roles: ['admin'],
+    });
+    const liquidacion = await prisma.liquidacion.create({
+      data: { localId: local.id, creadoPor: admin.id },
+    });
+    const movimiento = await crearMovimientoDePrueba({
+      localId: local.id,
+      monto: 1000,
+    });
+    const enlace = await prisma.liquidacionMovimiento.create({
+      data: {
+        liquidacionId: liquidacion.id,
+        ledgerId: movimiento.id,
+        rol: 'liberacion',
+      },
+    });
+
+    await assert.rejects(
+      () => prisma.liquidacion.delete({ where: { id: liquidacion.id } }),
+      /no se pueden borrar|no se borra|invariante 11|restrict/i,
+    );
+    const claveEnlace = {
+      liquidacionId: enlace.liquidacionId,
+      ledgerId: enlace.ledgerId,
+    };
+
+    await assert.rejects(
+      () =>
+        prisma.liquidacionMovimiento.delete({
+          where: { liquidacionId_ledgerId: claveEnlace },
+        }),
+      /no se modifican|no se borran|invariante 11|restrict/i,
+    );
+    await assert.rejects(
+      () =>
+        prisma.liquidacionMovimiento.update({
+          where: { liquidacionId_ledgerId: claveEnlace },
+          data: { rol: 'pago' },
+        }),
+      /no se modifican|invariante 11|restrict/i,
+    );
+
+    assert.ok(
+      await prisma.liquidacion.findUnique({ where: { id: liquidacion.id } }),
+    );
+    const sigue = await prisma.liquidacionMovimiento.findUnique({
+      where: { liquidacionId_ledgerId: claveEnlace },
+    });
+    assert.equal(sigue.rol, 'liberacion');
+
+    // Una liquidacion terminal tampoco acepta enlaces nuevos.
+    const otroMovimiento = await crearMovimientoDePrueba({
+      localId: local.id,
+      monto: 2000,
+    });
+    await prisma.liquidacion.update({
+      where: { id: liquidacion.id },
+      data: { estado: 'cancelada' },
+    });
+    await assert.rejects(
+      () =>
+        prisma.liquidacionMovimiento.create({
+          data: {
+            liquidacionId: liquidacion.id,
+            ledgerId: otroMovimiento.id,
+            rol: 'liberacion',
+          },
+        }),
+      /terminal|movimientos nuevos|invariante 11|restrict/i,
     );
   });
 

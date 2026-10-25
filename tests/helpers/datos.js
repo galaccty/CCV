@@ -16,6 +16,7 @@ import { prisma } from './base.js';
 import { crearVariante } from '../../src/services/stock.js';
 import { aBigInt, multiplicar, sumar } from '../../src/lib/dinero.js';
 import { limpiarCacheConfiguracion } from '../../src/services/configuracion.js';
+import { guardarCuentaBancariaVendedor } from '../../src/services/cuentaBancaria.js';
 
 let contador = 0;
 
@@ -405,5 +406,24 @@ export async function crearReembolsoDePrueba({
 export async function crearMovimientoDePrueba({ localId = null, monto = 1000n } = {}) {
   return prisma.ledger.create({
     data: { localId, tipo: 'ajuste', monto: aBigInt(monto, 'monto') },
+  });
+}
+
+/**
+ * Registra una cuenta bancaria completa usando el mismo servicio que la API.
+ * Asi las pruebas comprueban el cifrado real y no un atajo de la base.
+ */
+export async function crearCuentaBancariaDePrueba(local, datos = {}) {
+  return guardarCuentaBancariaVendedor({
+    usuario: { id: local.usuarioId },
+    localId: local.id,
+    datos: {
+      banco: 'Banco de Prueba',
+      tipo_cuenta: 'ahorros',
+      numero_cuenta: '000123456789',
+      titular: 'Titular de Prueba',
+      documento_titular: '1020304050',
+      ...datos,
+    },
   });
 }

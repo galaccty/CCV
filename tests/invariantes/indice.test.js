@@ -26,10 +26,10 @@ const ESPERADOS = [
   [5, 'activo', 'triggers: los snapshots de sub_pedido y detalle_producto no se modifican'],
   [6, 'activo', 'job 4d: libera tras la retencion y respeta reembolsos pendientes y disputas abiertas'],
   [7, 'activo', 'modulo unico de stock y descuento atomico probado en concurrencia'],
-  [8, 'pendiente', 'Etapa 4 - liquidaciones'],
+  [8, 'activo', 'compensacion solo al preparar una liquidacion y solo con saldo liberado'],
   [9, 'activo', 'trigger y recalcular_estado_local cubren la maquina de estados del local'],
   [10, 'activo', 'Idempotency-Key obligatoria en los POST de pedido y pago'],
-  [11, 'parcial', 'pedidos, pagos, reembolsos, sub_pedidos, detalles, ledger y cuenta_local protegidos; faltan productos y retencion'],
+  [11, 'parcial', 'pedidos, pagos, reembolsos, sub_pedidos, detalles, ledger, cuenta_local y liquidaciones protegidos; faltan productos y retencion'],
   [12, 'activo', 'el checkout calcula precios, comision, envio y total en el backend'],
 ];
 

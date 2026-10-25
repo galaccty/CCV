@@ -70,3 +70,28 @@ Reglas:
 - `SESSION_SECRET` distinto del de desarrollo y generado con aleatoriedad.
 - Claves de Wompi, correo y almacenamiento solo en variables de entorno. Nunca
   en el repositorio ni en archivos `.env` versionados.
+
+## 5. Cifrado de datos bancarios
+
+- `CUENTA_BANCARIA_ENCRYPTION_KEY` debe ser base64 de exactamente 32 bytes
+  aleatorios. Generarla con:
+
+  ```bash
+  node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
+  ```
+
+- La clave cifra con AES-256-GCM el numero de cuenta y el documento del titular
+  del local, y el snapshot de esos datos en cada liquidacion. Nunca se guarda
+  en la base ni se escribe en logs.
+- **No cambiar ni perder la clave sin un plan de recifrado.** Si se reemplaza,
+  los datos existentes dejan de poder descifrarse. La rotacion requiere leer
+  con la clave anterior, escribir con la nueva y conservar un respaldo seguro
+  durante la ventana de migracion.
+- Guardar la clave en el gestor de secretos del hosting, con acceso restringido
+  y respaldo fuera del repositorio. No reutilizar `SESSION_SECRET`.
+- El admin solo ve el numero y el documento completos en el detalle de una
+  liquidacion. Las listas, el vendedor y los logs reciben valores enmascarados.
+- Antes de desplegar, verificar que la base no contenga numeros de cuenta o
+  documentos en columnas de texto plano. Esos datos solo viven en
+  `numero_cuenta_cifrado`, `documento_titular_cifrado` y en las columnas
+  cifradas del snapshot de la liquidacion.

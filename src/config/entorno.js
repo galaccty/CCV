@@ -21,6 +21,22 @@ const esquemaConfig = z.object({
     .transform((v) => v === 'true'),
   SESSION_MAX_AGE_MINUTOS: z.coerce.number().int().positive().default(120),
 
+  // Clave simetrica de 32 bytes (base64) para cifrar numero de cuenta y
+  // documento del titular con AES-256-GCM. No se registra ni se expone.
+  CUENTA_BANCARIA_ENCRYPTION_KEY: z
+    .string()
+    .min(1, 'falta CUENTA_BANCARIA_ENCRYPTION_KEY en el .env')
+    .refine(
+      (valor) => {
+        try {
+          return Buffer.from(valor, 'base64').length === 32;
+        } catch {
+          return false;
+        }
+      },
+      'CUENTA_BANCARIA_ENCRYPTION_KEY debe ser base64 de exactamente 32 bytes',
+    ),
+
   MAIL_DRIVER: z.enum(['consola', 'ninguno']).default('consola'),
   MAIL_FROM: z.string().default('no-reply@tudominio.co'),
   MAIL_PROVEEDOR_API_KEY: z.string().optional().default(''),
@@ -57,6 +73,16 @@ if (
 ) {
   throw new Error(
     'SESSION_SECRET sigue con el valor de ejemplo. Genera uno antes de desplegar.',
+  );
+}
+
+if (
+  valores.NODE_ENV === 'production' &&
+  valores.CUENTA_BANCARIA_ENCRYPTION_KEY ===
+    'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+) {
+  throw new Error(
+    'CUENTA_BANCARIA_ENCRYPTION_KEY sigue con el valor de ejemplo. Genera una antes de desplegar.',
   );
 }
 

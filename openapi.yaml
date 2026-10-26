@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Centro Comercial Virtual - API
-  version: 0.8.0
+  version: 0.9.0
   description: |
     Contrato de la API del backend. Es la fuente de verdad: las rutas se
     implementan después de quedar documentadas aquí.
@@ -31,6 +31,12 @@ info:
     total digital por el flujo de la 4c-2a y auditoría de toda cancelación en
     efectivo ya aceptada. El listado admin de esas cancelaciones permite
     filtrar por local y fecha.
+
+    Etapa 4f-2: jobs de auto-entrega, expiracion de pagos, bloqueo diario,
+    conciliacion e integridad; panel admin de configuracion y alertas; y
+    listado paginado de reembolsos filtrable por estado. Las alertas de
+    conciliacion e integridad solo se generan: ningun job corrige saldos,
+    totales ni estados financieros.
 
     CORS: el backend solo responde con credenciales al origen configurado en
     `CORS_ORIGINS`. Las coordenadas de las direcciones llegan desde el
@@ -2774,6 +2780,185 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
 
+  /api/v1/admin/configuracion:
+    get:
+      tags: [Admin]
+      summary: Leer la configuracion del sistema
+      description: |
+        Devuelve todas las claves de `configuracion` con su valor ya tipado.
+        `congelada = true` significa que el valor queda copiado en el snapshot
+        de cada pedido nuevo y no modifica los pedidos ya creados.
+      operationId: listarConfiguracionAdmin
+      security:
+        - cookieSesion: []
+      responses:
+        '200':
+          description: Configuracion vigente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfiguracionAdmin'
+        '403':
+          $ref: '#/components/responses/Error'
+    patch:
+      tags: [Admin]
+      summary: Cambiar claves permitidas de configuracion
+      description: |
+        Solo acepta las claves conocidas y valida el tipo y el rango de cada
+        una. Las claves congeladas (`porcentaje_comision`, `comision_minima`,
+        `pedido_minimo`, `tarifa_base_envio`, `tarifa_por_km` y
+        `dias_retencion`) solo afectan pedidos nuevos; la respuesta lo indica
+        en `cambios[].afecta_pedidos_nuevos`.
+
+        Si se cambia `limite_deuda` o `plazo_dias`, todos los locales se
+        recalculan dentro de la misma transaccion. Cada clave modificada deja
+        una fila en `auditoria_admin` con actor, valor anterior, valor nuevo y
+        fecha.
+      operationId: actualizarConfiguracionAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActualizarConfiguracionRequest'
+      responses:
+        '200':
+          description: Configuracion actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfiguracionActualizada'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/alertas:
+    get:
+      tags: [Admin]
+      summary: Listar alertas operativas
+      description: |
+        Incluye las alertas de conciliacion e integridad y las de reembolsos
+        que requieren intervencion manual. Las alertas se cierran solo con
+        `POST /admin/alertas/{id}/resolver`, dejando una nota auditada.
+      operationId: listarAlertasAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoAlerta'
+        - name: tipo
+          in: query
+          required: false
+          description: Tipo exacto de alerta, por ejemplo `conciliacion_saldo`.
+          schema:
+            type: string
+            maxLength: 80
+        - name: local_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Lista paginada de alertas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaAlertas'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/alertas/{id}/resolver:
+    post:
+      tags: [Admin]
+      summary: Resolver una alerta con una nota
+      description: |
+        El cambio de estado es condicional: una alerta ya resuelta responde
+        `409 alerta_ya_resuelta`. La nota y el actor quedan en la alerta y en
+        `auditoria_admin`.
+      operationId: resolverAlertaAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdAlerta'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolverAlertaRequest'
+      responses:
+        '200':
+          description: Alerta resuelta
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alerta'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+  /api/v1/admin/reembolsos:
+    get:
+      tags: [Admin]
+      summary: Listar reembolsos
+      description: |
+        Lista paginada de reembolsos, ordenada del mas reciente al mas antiguo.
+        El filtro `estado` permite ver los pendientes que requieren accion
+        manual antes de completarlos o fallarlos.
+      operationId: listarReembolsosAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoReembolso'
+        - name: tipo
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/TipoReembolso'
+        - name: local_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Lista paginada de reembolsos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaReembolsos'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
   /api/v1/vendedor/liquidaciones:
     get:
       tags: [Vendedor]
@@ -2917,6 +3102,13 @@ components:
       in: path
       required: true
       description: Identificador del reembolso.
+      schema:
+        type: integer
+    IdAlerta:
+      name: id
+      in: path
+      required: true
+      description: Identificador de la alerta.
       schema:
         type: integer
     IdLiquidacion:
@@ -4757,6 +4949,269 @@ components:
           minimum: 0
           description: Calculado por el backend con el precio congelado.
 
+    TipoReembolso:
+      type: string
+      enum: [digital, efectivo]
+
+    EstadoReembolso:
+      type: string
+      enum: [pendiente, completado, incumplido, fallido]
+
+    EstadoAlerta:
+      type: string
+      enum: [abierta, resuelta]
+
+    SeveridadAlerta:
+      type: string
+      enum: [baja, media, alta]
+
+    ConfiguracionItem:
+      type: object
+      required:
+        - clave
+        - valor
+        - tipo
+        - congelada
+        - actualizado_en
+      properties:
+        clave:
+          type: string
+        valor:
+          oneOf:
+            - type: number
+            - type: string
+            - type: boolean
+          description: Valor ya interpretado segun `tipo`.
+        tipo:
+          type: string
+          enum: [entero, numero, texto, booleano]
+        descripcion:
+          type: string
+          nullable: true
+        congelada:
+          type: boolean
+          description: |
+            Si es verdadera, el valor queda en el snapshot de los pedidos
+            nuevos y no cambia pedidos ya creados.
+        actualizado_en:
+          type: string
+          format: date-time
+
+    ConfiguracionAdmin:
+      type: object
+      required: [datos]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConfiguracionItem'
+
+    ActualizarConfiguracionRequest:
+      type: object
+      additionalProperties: false
+      required: [valores]
+      properties:
+        valores:
+          type: object
+          additionalProperties: false
+          minProperties: 1
+          properties:
+            porcentaje_comision:
+              type: number
+              minimum: 0
+              maximum: 100
+            comision_minima:
+              type: integer
+              minimum: 0
+            pedido_minimo:
+              type: integer
+              minimum: 0
+            tarifa_base_envio:
+              type: integer
+              minimum: 0
+            tarifa_por_km:
+              type: integer
+              minimum: 0
+            dias_retencion:
+              type: integer
+              minimum: 3
+              maximum: 365
+            limite_deuda:
+              type: integer
+              minimum: 0
+            plazo_dias:
+              type: integer
+              minimum: 1
+              maximum: 365
+            dias_auto_entrega:
+              type: integer
+              minimum: 1
+              maximum: 365
+            minutos_expiracion_pago:
+              type: integer
+              minimum: 1
+              maximum: 10080
+            horas_aceptacion:
+              type: integer
+              minimum: 1
+              maximum: 8760
+            dias_reembolso_efectivo:
+              type: integer
+              minimum: 1
+              maximum: 365
+            intentos_maximos_reembolso:
+              type: integer
+              minimum: 1
+              maximum: 100
+            monto_minimo_liquidacion:
+              type: integer
+              minimum: 0
+
+    CambioConfiguracion:
+      type: object
+      required:
+        - clave
+        - valor_anterior
+        - valor_nuevo
+        - congelada
+        - afecta_pedidos_nuevos
+      properties:
+        clave:
+          type: string
+        valor_anterior:
+          oneOf:
+            - type: number
+            - type: string
+            - type: boolean
+        valor_nuevo:
+          oneOf:
+            - type: number
+            - type: string
+            - type: boolean
+        congelada:
+          type: boolean
+        afecta_pedidos_nuevos:
+          type: boolean
+        mensaje:
+          type: string
+
+    ConfiguracionActualizada:
+      type: object
+      required: [datos, cambios, locales_recalculados]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConfiguracionItem'
+        cambios:
+          type: array
+          items:
+            $ref: '#/components/schemas/CambioConfiguracion'
+        locales_recalculados:
+          type: integer
+          minimum: 0
+          description: |
+            Cantidad de locales recalculados en la misma transaccion. Solo es
+            mayor que cero al cambiar `limite_deuda` o `plazo_dias`.
+
+    Alerta:
+      type: object
+      required:
+        - id
+        - clave
+        - tipo
+        - severidad
+        - estado
+        - titulo
+        - creada_en
+        - actualizada_en
+        - ultima_deteccion_en
+      properties:
+        id:
+          type: integer
+        clave:
+          type: string
+          description: Clave estable para no duplicar la misma alerta.
+        tipo:
+          type: string
+          example: conciliacion_saldo
+        severidad:
+          $ref: '#/components/schemas/SeveridadAlerta'
+        estado:
+          $ref: '#/components/schemas/EstadoAlerta'
+        titulo:
+          type: string
+        detalle:
+          type: object
+          nullable: true
+          additionalProperties: true
+        local_id:
+          type: integer
+          nullable: true
+        pedido_id:
+          type: integer
+          nullable: true
+        pago_id:
+          type: integer
+          nullable: true
+        reembolso_id:
+          type: integer
+          nullable: true
+        sub_pedido_id:
+          type: integer
+          nullable: true
+        creada_en:
+          type: string
+          format: date-time
+        actualizada_en:
+          type: string
+          format: date-time
+        ultima_deteccion_en:
+          type: string
+          format: date-time
+        resuelta_en:
+          type: string
+          format: date-time
+          nullable: true
+        resuelta_por:
+          type: integer
+          nullable: true
+        nota_resolucion:
+          type: string
+          nullable: true
+
+    ListaAlertas:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alerta'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
+
+    ResolverAlertaRequest:
+      type: object
+      additionalProperties: false
+      required: [nota]
+      properties:
+        nota:
+          type: string
+          minLength: 3
+          maxLength: 1000
+
+    ListaReembolsos:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reembolso'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'
+
     Reembolso:
       type: object
       required:
@@ -4779,6 +5234,12 @@ components:
           type: integer
         sub_pedido_id:
           type: integer
+        local_id:
+          type: integer
+          description: Local del sub-pedido reembolsado, util para filtrar.
+        local_nombre:
+          type: string
+          description: Nombre congelado del local en el sub-pedido.
         disputa_id:
           type: integer
           nullable: true
@@ -4916,6 +5377,7 @@ components:
           type: string
           nullable: true
         tipo_cuenta:
+          type: string
           allOf:
             - $ref: '#/components/schemas/TipoCuentaBancaria'
           nullable: true
@@ -4980,6 +5442,7 @@ components:
           type: string
           nullable: true
         tipo_cuenta:
+          type: string
           allOf:
             - $ref: '#/components/schemas/TipoCuentaBancaria'
           nullable: true
@@ -5085,6 +5548,7 @@ components:
           type: string
           nullable: true
         cuenta_destino:
+          type: object
           allOf:
             - $ref: '#/components/schemas/LiquidacionCuentaDestino'
           nullable: true
@@ -5177,6 +5641,7 @@ components:
           required: [reembolso, devoluciones_stock, auditoria_id]
           properties:
             reembolso:
+              type: object
               allOf:
                 - $ref: '#/components/schemas/Reembolso'
               nullable: true

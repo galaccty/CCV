@@ -129,7 +129,7 @@ export async function listarSubPedidosVendedor({
   });
 }
 
-async function sincronizarEstadoPedido(tx, pedidoId) {
+export async function sincronizarEstadoPedido(tx, pedidoId) {
   const pedido = await tx.pedido.findUnique({
     where: { id: pedidoId },
     select: { estado: true },

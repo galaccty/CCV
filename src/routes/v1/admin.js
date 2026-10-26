@@ -5,6 +5,7 @@ import * as cuentaLocal from '../../services/cuentaLocal.js';
 import * as liquidaciones from '../../services/liquidaciones.js';
 import * as disputas from '../../services/disputas.js';
 import * as reembolsos from '../../services/reembolsos.js';
+import * as cancelaciones from '../../services/cancelaciones.js';
 import { requiereRol } from '../../middlewares/sesion.js';
 import { idempotenciaRequerida } from '../../middlewares/idempotencia.js';
 import {
@@ -17,6 +18,7 @@ import {
   esquemaAgregarEvidencia,
   esquemaConfirmarLiquidacion,
   esquemaFallarLiquidacion,
+  esquemaFiltrosCancelacionesEfectivo,
   esquemaFiltrosDisputas,
   esquemaFiltrosLiquidaciones,
   esquemaFiltrosLocales,
@@ -239,6 +241,28 @@ router.post(
     );
   },
 );
+
+// ---------------------------------------------------------------------------
+// Cancelaciones de efectivo aceptado (Etapa 4f-1)
+// ---------------------------------------------------------------------------
+
+router.get('/cancelaciones-efectivo', async (req, res) => {
+  const filtros = esquemaFiltrosCancelacionesEfectivo.parse(req.query);
+  const { pagina, porPagina } = leerPaginacion(req.query);
+
+  res.json(
+    await cancelaciones.listarCancelacionesEfectivo({
+      localId: filtros.local_id,
+      fecha: filtros.fecha,
+      desde: filtros.desde,
+      hasta: filtros.hasta,
+      fechaDesde: filtros.fecha_desde,
+      fechaHasta: filtros.fecha_hasta,
+      pagina,
+      porPagina,
+    }),
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Disputas (Etapa 4c-1)

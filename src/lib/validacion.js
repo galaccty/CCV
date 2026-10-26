@@ -662,3 +662,40 @@ export const esquemaFiltrosLiquidaciones = z.object({
   local_id: z.coerce.number().int().positive().optional(),
   estado: z.enum(ESTADOS_LIQUIDACION).optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Esquemas de validacion de la Etapa 4f-1 (cancelaciones)
+// ---------------------------------------------------------------------------
+
+/**
+ * El cliente solo aporta el motivo. Cualquier monto, cantidad o reembolso que
+ * intente imponer se descarta: el backend usa los precios congelados.
+ */
+export const esquemaCancelarSubPedido = z.object({
+  motivo: z
+    .string()
+    .trim()
+    .min(1, 'El motivo de la cancelacion es obligatorio.')
+    .max(200, 'El motivo no puede superar 200 caracteres.'),
+});
+
+const esquemaFechaConsulta = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((valor) => {
+    const fecha = /^\d{4}-\d{2}-\d{2}$/.test(valor)
+      ? `${valor}T00:00:00.000Z`
+      : valor;
+    return !Number.isNaN(Date.parse(fecha));
+  }, 'La fecha debe ser YYYY-MM-DD o una fecha ISO 8601 valida.');
+
+export const esquemaFiltrosCancelacionesEfectivo = z.object({
+  local_id: z.coerce.number().int().positive().optional(),
+  fecha: esquemaFechaConsulta.optional(),
+  desde: esquemaFechaConsulta.optional(),
+  hasta: esquemaFechaConsulta.optional(),
+  // Alias utiles para clientes que ya usan nombres explicitos.
+  fecha_desde: esquemaFechaConsulta.optional(),
+  fecha_hasta: esquemaFechaConsulta.optional(),
+});

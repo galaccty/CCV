@@ -59,11 +59,34 @@ Reglas:
 - Aplicar migraciones con `npm run db:migrate` (nunca editar una migración ya
   aplicada).
 - Backup automático de PostgreSQL y prueba periódica de restauración.
-- Los jobs (liberación de saldo, bloqueo por deuda, conciliación, expiración de
-  pagos, etc.) necesitan una instancia siempre activa o un programador externo.
-  Las capas gratuitas que duermen la instancia no sirven para esto.
+- Los jobs necesitan una instancia siempre activa o un programador externo.
+  Las capas gratuitas que duermen la instancia no sirven para esto. El detalle
+  de cada job, su frecuencia, comando, candado y qué hacer si falla está en
+  [`docs/jobs.md`](./jobs.md).
+- Programar el cron en UTC. Una configuración de referencia para producción:
+
+  ```cron
+  */5 * * * *  cd /app && npm run job:expirar-pagos
+  0 * * * *    cd /app && npm run job:auto-entregar
+  0 * * * *    cd /app && npm run job:cancelar-efectivo-sin-aceptar
+  0 * * * *    cd /app && npm run job:liberar-saldos
+  15 0 * * *   cd /app && npm run job:reembolsos-efectivo-vencidos
+  30 0 * * *   cd /app && npm run job:bloquear-locales-vencidos
+  0 2 * * *    cd /app && npm run job:conciliar
+  0 3 * * *    cd /app && npm run job:integridad
+  ```
+
+  `npm run job:todos` ejecuta los ocho en orden para una corrida manual, pero no
+  reemplaza las frecuencias cortas de expiración de pagos y auto-entrega.
+- Cada job toma su advisory lock: si el cron solapa dos ejecuciones, una se
+  omite sin tocar datos. Un error del job sale con código 1; revisar los logs y
+  la cola de alertas del panel admin antes de reintentar.
+- Los jobs de conciliación e integridad solo alertan. Nunca corrigen saldos,
+  totales ni estados financieros.
 - Definir y sembrar la configuración real (`limite_deuda`, `plazo_dias`,
-  `dias_retencion`, comisión, envío, etc.) antes de abrir ventas.
+  `dias_retencion`, comisión, envío, etc.) antes de abrir ventas. Los cambios de
+  `limite_deuda` o `plazo_dias` desde el panel recalculan todos los locales en
+  una transacción y quedan auditados.
 
 ## 4. Secretos
 

@@ -8,6 +8,7 @@ import { registrarMovimiento } from './ledger.js';
 import { descontarItemsDePedido } from './carrito.js';
 import { puedeVenderLocal } from '../domain/estados.js';
 import * as pagos from './pagos.js';
+import { abrirAlertaEnTx } from './alertas.js';
 
 /**
  * WEBHOOK DE WOMPI (secciones 4.1.3 y 4.1.4)
@@ -214,7 +215,13 @@ export async function procesarEvento({ cuerpo, checksum }) {
         throw new ErrorApi('pedido_no_encontrado', 'El pedido no existe.', 404);
       }
 
-      if (pedidoActual.estado === 'expirado') {
+      // El job de expiracion deja el pedido `cancelado`. Cualquiera de los dos
+      // estados significa que ya no se puede confirmar la venta: si Wompi
+      // aprobo tarde, se toma el camino B y se registra el reembolso.
+      if (
+        pedidoActual.estado === 'expirado' ||
+        pedidoActual.estado === 'cancelado'
+      ) {
         throw new ErrorConfirmacionNoPosible('pedido_expirado');
       }
 
@@ -380,8 +387,11 @@ async function crearReembolsoTotal({ pago, transaccionId, motivo }) {
     // En modo manual queda `aprobado` (el dinero si entro); en modo falso se
     // simula que ya salio y queda `reembolsado`. Si otra peticion gano la
     // carrera, esta no toca nada y el webhook repetido no duplica efectos.
+    // `expirado` es un pago que el job cerro y Wompi aprobo despues. Se
+    // reclama igual que `pendiente` para que el dinero que si entro quede
+    // registrado y el reembolso se ejecute por el camino manual o simulado.
     const reclamo = await tx.pago.updateMany({
-      where: { id: pago.id, estado: 'pendiente' },
+      where: { id: pago.id, estado: { in: ['pendiente', 'expirado'] } },
       data: {
         estado: esManual ? 'aprobado' : 'reembolsado',
         idTransaccionWompi: transaccionId,
@@ -489,6 +499,27 @@ async function crearReembolsoTotal({ pago, transaccionId, motivo }) {
         where: { id: pagoActual.pedidoId },
         data: { estado: 'reembolso_pendiente' },
       });
+
+      if (reembolsoIds.length > 0) {
+        await abrirAlertaEnTx(tx, {
+          clave: `reembolso_pendiente_manual:pago:${pago.id}`,
+          tipo: 'reembolso_pendiente_manual',
+          severidad: 'alta',
+          titulo: 'Pago aprobado tarde: devolver manualmente',
+          detalle: {
+            pago_id: pago.id,
+            pedido_id: pagoActual.pedidoId,
+            reembolso_ids: reembolsoIds,
+            motivo,
+            monto: pagoActual.monto.toString(),
+          },
+          localId: subPedidos[0]?.localId ?? null,
+          pedidoId: pagoActual.pedidoId,
+          pagoId: pago.id,
+          reembolsoId: reembolsoIds[0],
+          subPedidoId: subPedidos[0]?.id ?? null,
+        });
+      }
 
       return {
         reembolsado: reembolsoIds.length > 0,

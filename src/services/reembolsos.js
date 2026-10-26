@@ -11,12 +11,13 @@ import {
 } from '../lib/dinero.js';
 import { ErrorApi, errorNoEncontrado } from '../lib/errores.js';
 import { logger } from '../lib/logger.js';
-import { esquemaCrearReembolso } from '../lib/validacion.js';
+import { esquemaCrearReembolso, envolverLista } from '../lib/validacion.js';
 import { derivarEstadoPedido } from '../domain/estados.js';
 import { obtenerConfiguracionEnTransaccion } from './configuracion.js';
 import { recalcularEstadoLocal } from './estadoLocal.js';
 import { completarEnTx } from './idempotencia.js';
 import { registrarMovimiento } from './ledger.js';
+import { abrirAlertaEnTx } from './alertas.js';
 
 /**
  * REEMBOLSOS POR LINEA (Etapa 4c-2a)
@@ -71,6 +72,8 @@ export function serializarReembolso(reembolso) {
     id: reembolso.id,
     pago_id: reembolso.pagoId,
     sub_pedido_id: reembolso.subPedidoId,
+    local_id: reembolso.subPedido?.localId ?? null,
+    local_nombre: reembolso.subPedido?.nombreLocal ?? null,
     disputa_id: reembolso.disputaId,
     tipo: reembolso.tipo,
     monto: reembolso.monto,
@@ -92,6 +95,43 @@ export function serializarReembolso(reembolso) {
       monto: linea.monto,
     })),
   };
+}
+
+/**
+ * Listado admin de reembolsos. No mueve dinero: sirve para encontrar los
+ * `pendiente` que requieren completarse o fallarse a mano.
+ */
+export async function listarReembolsosAdmin({
+  estado,
+  tipo,
+  localId,
+  pagina,
+  porPagina,
+}) {
+  const where = {
+    ...(estado ? { estado } : {}),
+    ...(tipo ? { tipo } : {}),
+    ...(localId ? { subPedido: { is: { localId } } } : {}),
+  };
+
+  const [total, filas] = await Promise.all([
+    prisma.reembolso.count({ where }),
+    prisma.reembolso.findMany({
+      where,
+      include: INCLUIR_REEMBOLSO,
+      orderBy: [{ fecha: 'desc' }, { id: 'desc' }],
+      skip: (pagina - 1) * porPagina,
+      take: porPagina,
+    }),
+  ]);
+
+  return convertirBigIntAJson(
+    envolverLista(
+      filas.map(serializarReembolso),
+      { pagina, porPagina },
+      total,
+    ),
+  );
 }
 
 function errorLinea(mensaje, codigo = 'linea_reembolso_invalida') {
@@ -915,6 +955,23 @@ export async function fallarReembolso({
             descongelado: congelado.toString(),
           },
         },
+      });
+
+      await abrirAlertaEnTx(tx, {
+        clave: `reembolso_fallido:${reembolso.id}`,
+        tipo: 'reembolso_fallido',
+        severidad: 'alta',
+        titulo: 'Reembolso fallido: requiere revision manual',
+        detalle: {
+          reembolso_id: reembolso.id,
+          pago_id: reembolso.pagoId,
+          sub_pedido_id: reembolso.subPedidoId,
+          monto: reembolso.monto.toString(),
+        },
+        localId: reembolso.subPedido.localId,
+        pagoId: reembolso.pagoId,
+        reembolsoId: reembolso.id,
+        subPedidoId: reembolso.subPedidoId,
       });
 
       alerta = {

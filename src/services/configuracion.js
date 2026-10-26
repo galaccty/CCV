@@ -1,6 +1,13 @@
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../lib/logger.js';
 
+export {
+  CLAVES_CONGELADAS,
+  CLAVES_EN_VIVO,
+  CLAVES_CONFIGURACION,
+  esCongelada,
+} from '../domain/configuracion.js';
+
 /**
  * Lector de la tabla `configuracion`.
  *
@@ -12,7 +19,7 @@ import { logger } from '../lib/logger.js';
 const cache = new Map();
 let cacheCargada = false;
 
-function interpretar(valor, tipo) {
+export function interpretarValorConfiguracion(valor, tipo) {
   switch (tipo) {
     case 'entero':
       return Number.parseInt(valor, 10);
@@ -50,7 +57,7 @@ export function limpiarCacheConfiguracion() {
 export function obtener(clave, porDefecto = undefined) {
   const fila = cache.get(clave);
   if (!fila) return porDefecto;
-  const valor = interpretar(fila.valor, fila.tipo);
+  const valor = interpretarValorConfiguracion(fila.valor, fila.tipo);
   return valor === null || Number.isNaN(valor) ? porDefecto : valor;
 }
 
@@ -69,7 +76,7 @@ export async function obtenerConfiguracionEnTransaccion(tx, claves) {
 
   const valores = {};
   for (const fila of filas) {
-    valores[fila.clave] = interpretar(fila.valor, fila.tipo);
+    valores[fila.clave] = interpretarValorConfiguracion(fila.valor, fila.tipo);
   }
   return valores;
 }
@@ -89,32 +96,6 @@ export function obtenerTexto(clave, porDefecto = '') {
   return typeof v === 'string' ? v : porDefecto;
 }
 
-/**
- * Valor congelado vs valor en vivo (seccion 4.2).
- * Esta funcion existe para que la distincion quede visible en el codigo:
- * cuando llegue la Etapa 2, el checkout usara leerSnapshotPedido() y los
- * jobs usaran leerEnVivo().
- */
-export const CLAVES_CONGELADAS = [
-  'porcentaje_comision',
-  'comision_minima',
-  'pedido_minimo',
-  'tarifa_base_envio',
-  'tarifa_por_km',
-  'dias_retencion',
-];
-
-export const CLAVES_EN_VIVO = [
-  'limite_deuda',
-  'plazo_dias',
-  'dias_auto_entrega',
-  'minutos_expiracion_pago',
-  'horas_aceptacion',
-  'dias_reembolso_efectivo',
-  'intentos_maximos_reembolso',
-  'monto_minimo_liquidacion',
-];
-
-export function esCongelada(clave) {
-  return CLAVES_CONGELADAS.includes(clave);
-}
+// La distincion congelada/en vivo vive en `src/domain/configuracion.js` para
+// que la validacion de la API y el servicio de administracion compartan una
+// sola lista. Se reexporta arriba para no romper imports existentes.

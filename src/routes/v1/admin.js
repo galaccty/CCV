@@ -6,6 +6,8 @@ import * as liquidaciones from '../../services/liquidaciones.js';
 import * as disputas from '../../services/disputas.js';
 import * as reembolsos from '../../services/reembolsos.js';
 import * as cancelaciones from '../../services/cancelaciones.js';
+import * as adminConfiguracion from '../../services/adminConfiguracion.js';
+import * as alertas from '../../services/alertas.js';
 import { requiereRol } from '../../middlewares/sesion.js';
 import { idempotenciaRequerida } from '../../middlewares/idempotencia.js';
 import {
@@ -25,6 +27,10 @@ import {
   esquemaIdPositivo,
   esquemaLocalQuery,
   esquemaRegistrarPagoDeuda,
+  esquemaActualizarConfiguracion,
+  esquemaFiltrosAlertas,
+  esquemaFiltrosReembolsos,
+  esquemaResolverAlerta,
   leerPaginacion,
 } from '../../lib/validacion.js';
 
@@ -374,5 +380,67 @@ router.post(
     );
   },
 );
+
+// ---------------------------------------------------------------------------
+// Configuracion, alertas y listado de reembolsos (Etapa 4f-2)
+// ---------------------------------------------------------------------------
+
+router.get('/configuracion', async (_req, res) => {
+  res.json(await adminConfiguracion.listarConfiguracionAdmin());
+});
+
+router.patch('/configuracion', async (req, res) => {
+  const { valores } = esquemaActualizarConfiguracion.parse(req.body);
+
+  res.json(
+    await adminConfiguracion.actualizarConfiguracionAdmin({
+      admin: req.usuario,
+      valores,
+    }),
+  );
+});
+
+router.get('/alertas', async (req, res) => {
+  const filtros = esquemaFiltrosAlertas.parse(req.query);
+  const { pagina, porPagina } = leerPaginacion(req.query);
+
+  res.json(
+    await alertas.listarAlertasAdmin({
+      estado: filtros.estado,
+      tipo: filtros.tipo,
+      localId: filtros.local_id,
+      pagina,
+      porPagina,
+    }),
+  );
+});
+
+router.post('/alertas/:id/resolver', async (req, res) => {
+  const id = esquemaIdPositivo.parse(req.params.id);
+  const { nota } = esquemaResolverAlerta.parse(req.body);
+
+  res.json(
+    await alertas.resolverAlerta({
+      admin: req.usuario,
+      id,
+      nota,
+    }),
+  );
+});
+
+router.get('/reembolsos', async (req, res) => {
+  const filtros = esquemaFiltrosReembolsos.parse(req.query);
+  const { pagina, porPagina } = leerPaginacion(req.query);
+
+  res.json(
+    await reembolsos.listarReembolsosAdmin({
+      estado: filtros.estado,
+      tipo: filtros.tipo,
+      localId: filtros.local_id,
+      pagina,
+      porPagina,
+    }),
+  );
+});
 
 export default router;

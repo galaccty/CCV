@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFINICIONES_CONFIGURACION } from '../domain/configuracion.js';
 
 export const POR_PAGINA_POR_DEFECTO = 20;
 export const POR_PAGINA_MAXIMO = 100;
@@ -698,4 +699,80 @@ export const esquemaFiltrosCancelacionesEfectivo = z.object({
   // Alias utiles para clientes que ya usan nombres explicitos.
   fecha_desde: esquemaFechaConsulta.optional(),
   fecha_hasta: esquemaFechaConsulta.optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Esquemas de validacion de la Etapa 4f-2 (configuracion, alertas y reembolsos)
+// ---------------------------------------------------------------------------
+
+export const ESTADOS_REEMBOLSO = [
+  'pendiente',
+  'completado',
+  'incumplido',
+  'fallido',
+];
+
+export const TIPOS_REEMBOLSO = ['digital', 'efectivo'];
+export const ESTADOS_ALERTA = ['abierta', 'resuelta'];
+
+function esquemaValorConfiguracion(definicion) {
+  if (definicion.tipo === 'entero') {
+    let esquema = z.number().int();
+    if (definicion.minimo !== null) esquema = esquema.min(definicion.minimo);
+    if (definicion.maximo !== null) esquema = esquema.max(definicion.maximo);
+    return esquema;
+  }
+
+  if (definicion.tipo === 'numero') {
+    let esquema = z.number().finite();
+    if (definicion.minimo !== null) esquema = esquema.min(definicion.minimo);
+    if (definicion.maximo !== null) esquema = esquema.max(definicion.maximo);
+    return esquema;
+  }
+
+  if (definicion.tipo === 'booleano') return z.boolean();
+  return z.string();
+}
+
+const esquemaValoresConfiguracion = z
+  .object(
+    Object.fromEntries(
+      Object.entries(DEFINICIONES_CONFIGURACION).map(([clave, definicion]) => [
+        clave,
+        esquemaValorConfiguracion(definicion),
+      ]),
+    ),
+  )
+  .partial()
+  .strict()
+  .refine((valores) => Object.keys(valores).length > 0, {
+    message: 'Envia al menos una clave de configuracion.',
+  });
+
+export const esquemaActualizarConfiguracion = z
+  .object({
+    valores: esquemaValoresConfiguracion,
+  })
+  .strict();
+
+export const esquemaFiltrosAlertas = z.object({
+  estado: z.enum(ESTADOS_ALERTA).optional(),
+  tipo: z.string().trim().min(1).max(80).optional(),
+  local_id: z.coerce.number().int().positive().optional(),
+});
+
+export const esquemaResolverAlerta = z
+  .object({
+    nota: z
+      .string()
+      .trim()
+      .min(3, 'La nota debe tener al menos 3 caracteres.')
+      .max(1000, 'La nota no puede superar 1000 caracteres.'),
+  })
+  .strict();
+
+export const esquemaFiltrosReembolsos = z.object({
+  estado: z.enum(ESTADOS_REEMBOLSO).optional(),
+  tipo: z.enum(TIPOS_REEMBOLSO).optional(),
+  local_id: z.coerce.number().int().positive().optional(),
 });

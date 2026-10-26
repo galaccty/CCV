@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Centro Comercial Virtual - API
-  version: 0.7.0
+  version: 0.8.0
   description: |
     Contrato de la API del backend. Es la fuente de verdad: las rutas se
     implementan después de quedar documentadas aquí.
@@ -26,6 +26,11 @@ info:
     admin/vendedor, compensación de deuda solo al preparar y reversas al
     fallar. El número de cuenta y el documento solo se muestran completos al
     admin en el detalle de una liquidación.
+
+    Etapa 4f-1: cancelación de sub-pedidos con devolución de stock, reembolso
+    total digital por el flujo de la 4c-2a y auditoría de toda cancelación en
+    efectivo ya aceptada. El listado admin de esas cancelaciones permite
+    filtrar por local y fecha.
 
     CORS: el backend solo responde con credenciales al origen configurado en
     `CORS_ORIGINS`. Las coordenadas de las direcciones llegan desde el
@@ -816,6 +821,67 @@ paths:
           $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Error'
+
+  /api/v1/sub-pedidos/{id}/cancelar:
+    post:
+      tags: [Sub-pedidos]
+      summary: Cancelar un sub-pedido
+      description: |
+        El comprador solo puede cancelar en `por_aceptar`. En `preparando` la
+        cancelación la ejecuta el vendedor (es su aceptación de la solicitud);
+        el comprador recibe 409. En `enviado` o estados posteriores no se
+        cancela: se abre una disputa.
+
+        En la misma transacción se guarda el historial, se devuelve el stock
+        si ya se había descontado (digital pagado o efectivo aceptado) y se
+        recalcula el estado del pedido. Si el pago digital estaba aprobado, se
+        crea un reembolso total por el flujo de la 4c-2a, incluyendo el envío
+        porque el pedido no se entregó. El cuerpo solo acepta el motivo; los
+        montos siempre los calcula el backend con los precios congelados.
+
+        En efectivo ya aceptado no se crea deuda de comisión ni reembolso
+        digital: esa cancelación queda en `auditoria_admin` con el actor, el
+        motivo y el estado anterior.
+      operationId: cancelarSubPedido
+      security:
+        - cookieSesion: []
+      parameters:
+        - $ref: '#/components/parameters/IdSubPedido'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelarSubPedidoRequest'
+      responses:
+        '200':
+          description: Sub-pedido cancelado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelacionSubPedido'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: |
+            El estado no permite cancelar, el vendedor aún no acepta una
+            cancelación en `preparando` o otra petición ganó la transición.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: El reembolso calculado no cumple las reglas de montos o líneas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /api/v1/rubros:
     get:
@@ -2649,6 +2715,64 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /api/v1/admin/cancelaciones-efectivo:
+    get:
+      tags: [Admin]
+      summary: Listar cancelaciones de pedidos en efectivo ya aceptados
+      description: |
+        Lista las cancelaciones auditadas de sub-pedidos en efectivo que ya
+        habían descontado stock (`preparando`), hayan sido ejecutadas por el
+        vendedor, el comprador con autorización o un administrador. No incluye
+        cancelaciones en `por_aceptar` porque allí nunca hubo stock reservado
+        ni comisión involucrada.
+      operationId: listarCancelacionesEfectivoAdmin
+      security:
+        - cookieSesion: []
+      parameters:
+        - name: local_id
+          in: query
+          required: false
+          description: Filtra por el local del sub-pedido cancelado.
+          schema:
+            type: integer
+            minimum: 1
+        - name: fecha
+          in: query
+          required: false
+          description: Día exacto en formato `YYYY-MM-DD` (UTC).
+          schema:
+            type: string
+            format: date
+        - name: desde
+          in: query
+          required: false
+          description: |
+            Inicio inclusivo. Acepta `YYYY-MM-DD` o fecha ISO 8601 con hora.
+            Si es solo fecha, se toma desde las 00:00 UTC.
+          schema:
+            type: string
+        - name: hasta
+          in: query
+          required: false
+          description: |
+            Fin inclusivo. Acepta `YYYY-MM-DD` o fecha ISO 8601 con hora. Si
+            es solo fecha, se toma hasta las 23:59:59.999 UTC.
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Pagina'
+        - $ref: '#/components/parameters/PorPagina'
+      responses:
+        '200':
+          description: Lista paginada de cancelaciones
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListaCancelacionesEfectivo'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
 
   /api/v1/vendedor/liquidaciones:
     get:
@@ -4498,7 +4622,7 @@ components:
           minimum: 1
         origen:
           type: string
-          enum: [disputa_sin_entrega, producto_recibido]
+          enum: [disputa_sin_entrega, producto_recibido, cancelacion]
         registrado_en:
           type: string
           format: date-time
@@ -5015,3 +5139,118 @@ components:
           type: string
           minLength: 3
           maxLength: 1000
+
+    CancelarSubPedidoRequest:
+      type: object
+      additionalProperties: true
+      required: [motivo]
+      description: |
+        Solo `motivo` se usa. Cualquier intento de imponer un monto, una
+        cantidad o un reembolso se descarta; el backend calcula todo con los
+        precios congelados de `detalle_producto`.
+      properties:
+        motivo:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Explicación de la cancelación, visible en la auditoría.
+
+    CancelacionDevolucionStock:
+      type: object
+      required: [detalle_id, variante_id, cantidad, origen]
+      properties:
+        detalle_id:
+          type: integer
+        variante_id:
+          type: integer
+        cantidad:
+          type: integer
+          minimum: 1
+        origen:
+          type: string
+          enum: [cancelacion]
+
+    CancelacionSubPedido:
+      allOf:
+        - $ref: '#/components/schemas/SubPedido'
+        - type: object
+          required: [reembolso, devoluciones_stock, auditoria_id]
+          properties:
+            reembolso:
+              allOf:
+                - $ref: '#/components/schemas/Reembolso'
+              nullable: true
+              description: |
+                Reembolso total creado por el flujo 4c-2a cuando el pago digital
+                estaba aprobado. Nace `pendiente`; null en efectivo, en pagos no
+                aprobados o cuando no había nada que reembolsar.
+            devoluciones_stock:
+              type: array
+              items:
+                $ref: '#/components/schemas/CancelacionDevolucionStock'
+              description: Una fila por línea cuyo stock ya estaba descontado.
+            auditoria_id:
+              type: integer
+              description: Fila de `auditoria_admin` que registra actor, motivo y estado anterior.
+
+    CancelacionEfectivo:
+      type: object
+      required:
+        - id
+        - fecha
+        - sub_pedido_id
+        - pedido_id
+        - local_id
+        - actor_id
+        - actor_tipo
+        - motivo
+        - estado_anterior
+        - efectivo_aceptado
+        - monto_reembolso
+      properties:
+        id:
+          type: integer
+          description: Identificador de la fila de auditoría.
+        fecha:
+          type: string
+          format: date-time
+        sub_pedido_id:
+          type: integer
+        pedido_id:
+          type: integer
+        local_id:
+          type: integer
+        local_nombre:
+          type: string
+          nullable: true
+        actor_id:
+          type: integer
+          nullable: true
+        actor_tipo:
+          type: string
+          enum: [comprador, vendedor, admin, sistema]
+        motivo:
+          type: string
+        estado_anterior:
+          $ref: '#/components/schemas/EstadoSubPedido'
+        efectivo_aceptado:
+          type: boolean
+          enum: [true]
+        reembolso_id:
+          type: integer
+          nullable: true
+          description: Siempre null en efectivo; se conserva para trazabilidad.
+        monto_reembolso:
+          type: integer
+          description: Cero en efectivo; no se creó deuda de comisión ni reembolso.
+
+    ListaCancelacionesEfectivo:
+      type: object
+      required: [datos, paginacion]
+      properties:
+        datos:
+          type: array
+          items:
+            $ref: '#/components/schemas/CancelacionEfectivo'
+        paginacion:
+          $ref: '#/components/schemas/Paginacion'

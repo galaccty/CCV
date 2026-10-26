@@ -912,6 +912,7 @@ enum TipoEvidencia {
 enum OrigenDevolucionStock {
   disputa_sin_entrega
   producto_recibido
+  cancelacion
 
   @@map("origen_devolucion_stock")
 }

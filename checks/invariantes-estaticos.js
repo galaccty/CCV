@@ -69,6 +69,9 @@ function autorizadoComoPruebaDeInvariante(invariante, rutaRelativa) {
 const PRUEBAS_QUE_VIOLAN_CUENTA_LOCAL = new Set([
   'tests/integridad.test.js',
   'tests/invariantes/invariante_11_nada_financiero_se_borra.test.js',
+  // Simula una diferencia de conciliacion saltando triggers. El job debe
+  // detectarla y alertar, nunca corregirla.
+  'tests/etapa4/conciliacion.integridad.test.js',
 ]);
 
 // ---------------------------------------------------------------------------

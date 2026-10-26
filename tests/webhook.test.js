@@ -16,6 +16,7 @@ import {
 } from '../src/services/pagos.js';
 import { withTransaccion } from '../src/lib/transaccion.js';
 import { descontarStock } from '../src/services/stock.js';
+import { expirarPagos } from '../src/jobs/expirarPagos.js';
 
 /**
  * WEBHOOK DE WOMPI - ETAPA 2
@@ -794,4 +795,101 @@ describe('POST /api/v1/pagos/webhook', () => {
     assert.equal(carritoDb.items.length, 1);
     assert.equal(carritoDb.items[0].cantidad, 3);
   });
+
+  test(
+    'un pago aprobado despues de expirar sigue el camino de reembolso manual',
+    CON_BASE,
+    async () => {
+      const { pedido, pago, montoEnCentavos } = await crearPagoPendiente();
+
+      // Se corre la expiracion con una hora de referencia posterior al plazo
+      // configurado (30 minutos). El pago queda expirado y el pedido cancelado.
+      const expiracion = await expirarPagos({
+        ahora: new Date(Date.now() + 2 * 60 * 60 * 1000),
+        pagoIds: [pago.id],
+      });
+      assert.equal(expiracion.expirados, 1);
+
+      const pagoExpirado = await prisma.pago.findUnique({
+        where: { id: pago.id },
+      });
+      assert.equal(pagoExpirado.estado, 'expirado');
+
+      const pedidoCancelado = await prisma.pedido.findUnique({
+        where: { id: pedido.id },
+        include: { subPedidos: true },
+      });
+      assert.equal(pedidoCancelado.estado, 'cancelado');
+      assert.equal(pedidoCancelado.subPedidos[0].estado, 'cancelado');
+
+      // Wompi aprueba tarde. En produccion el dinero ya entro; el pago se
+      // registra y el reembolso queda pendiente para hacerlo a mano.
+      establecerReembolsoManualParaPruebas(true);
+
+      const idTransaccion = `tx-${claveUnica()}`;
+      registrarTransaccionFalsa({
+        id: idTransaccion,
+        reference: pago.referencia,
+        status: 'APPROVED',
+        amountInCents: montoEnCentavos,
+      });
+
+      const evento = crearEvento({
+        id: idTransaccion,
+        reference: pago.referencia,
+        amountInCents: montoEnCentavos,
+      });
+
+      const r = await enviarEvento(evento);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.deepEqual(r.body, {
+        recibido: true,
+        resultado: 'ok',
+        reembolso: true,
+      });
+
+      const pagoTardio = await prisma.pago.findUnique({
+        where: { id: pago.id },
+        include: { reembolsos: true },
+      });
+      assert.equal(pagoTardio.estado, 'aprobado');
+      assert.equal(pagoTardio.montoReembolsado, 0n);
+      assert.equal(pagoTardio.reembolsos.length, 1);
+      assert.equal(pagoTardio.reembolsos[0].estado, 'pendiente');
+      assert.equal(pagoTardio.reembolsos[0].motivo, 'pedido_expirado');
+
+      const pedidoTardio = await prisma.pedido.findUnique({
+        where: { id: pedido.id },
+      });
+      assert.equal(pedidoTardio.estado, 'reembolso_pendiente');
+
+      const alerta = await prisma.alerta.findUnique({
+        where: { clave: `reembolso_pendiente_manual:pago:${pago.id}` },
+      });
+      assert.ok(alerta, 'el admin debe ver la alerta de reembolso manual');
+      assert.equal(alerta.tipo, 'reembolso_pendiente_manual');
+      assert.equal(alerta.estado, 'abierta');
+
+      assert.equal(
+        await prisma.ledger.count({
+          where: { pagoId: pago.id, tipo: 'pago_recibido' },
+        }),
+        1,
+      );
+
+      // Un segundo evento no duplica reembolso ni alerta.
+      const repetido = await enviarEvento(evento);
+      assert.equal(repetido.status, 200, JSON.stringify(repetido.body));
+      assert.equal(
+        await prisma.reembolso.count({ where: { pagoId: pago.id } }),
+        1,
+      );
+      assert.equal(
+        await prisma.alerta.count({
+          where: { clave: `reembolso_pendiente_manual:pago:${pago.id}` },
+        }),
+        1,
+      );
+    },
+  );
 });

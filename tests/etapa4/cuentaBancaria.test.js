@@ -43,7 +43,15 @@ describe('cifrado bancario - AES-256-GCM', () => {
     const primero = cifrarDatoBancario('1234567890', 'numero_cuenta');
     const segundo = cifrarDatoBancario('1234567890', 'numero_cuenta');
 
-    assert.match(primero, /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    assert.match(
+      primero,
+      /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
+    );
+    assert.equal(
+      primero.split('.')[1],
+      process.env.CUENTA_BANCARIA_KEY_VERSION ?? '1',
+      'el sobre debe guardar la version de la clave',
+    );
     assert.notEqual(primero, segundo, 'cada cifrado debe usar un IV nuevo');
     assert.equal(
       descifrarDatoBancario(primero, 'numero_cuenta'),
@@ -69,6 +77,15 @@ describe('cifrado bancario - AES-256-GCM', () => {
       () => descifrarDatoBancario('texto-en-claro', 'numero_cuenta'),
       /formato invalido/,
     );
+
+    const cifrado = cifrarDatoBancario('1234567890', 'numero_cuenta');
+    const partes = cifrado.split('.');
+    partes[1] = '999';
+    assert.throws(
+      () => descifrarDatoBancario(partes.join('.'), 'numero_cuenta'),
+      /version de clave no soportada/,
+    );
+
     assert.equal(enmascararDatoBancario('12345678901234567890'), '****7890');
     assert.equal(enmascararDatoBancario('1234'), '****');
     assert.equal(enmascararDatoBancario(''), null);
@@ -77,9 +94,9 @@ describe('cifrado bancario - AES-256-GCM', () => {
       cuentaBancariaCompleta({
         banco: CUENTA.banco,
         tipoCuentaBancaria: CUENTA.tipo_cuenta,
-        numeroCuentaCifrado: 'v1.a.b.c',
+        numeroCuentaCifrado: 'v1.1.a.b.c',
         titularCuenta: CUENTA.titular,
-        documentoTitularCifrado: 'v1.d.e.f',
+        documentoTitularCifrado: 'v1.1.d.e.f',
       }),
       true,
     );

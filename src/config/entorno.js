@@ -36,6 +36,17 @@ const esquemaConfig = z.object({
       },
       'CUENTA_BANCARIA_ENCRYPTION_KEY debe ser base64 de exactamente 32 bytes',
     ),
+  // Identificador de la version de la clave. Se guarda dentro de cada valor
+  // cifrado para poder reconocerlo cuando se implemente la rotacion. Cambiarlo
+  // sin rotar los datos existentes los vuelve ilegibles.
+  CUENTA_BANCARIA_KEY_VERSION: z
+    .string()
+    .trim()
+    .regex(
+      /^[A-Za-z0-9_-]{1,32}$/,
+      'CUENTA_BANCARIA_KEY_VERSION debe tener 1 a 32 letras, numeros, guion o guion bajo',
+    )
+    .default('1'),
 
   MAIL_DRIVER: z.enum(['consola', 'ninguno']).default('consola'),
   MAIL_FROM: z.string().default('no-reply@tudominio.co'),

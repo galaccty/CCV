@@ -10,7 +10,11 @@ import { config } from '../config/entorno.js';
  *
  * Formato guardado:
  *
- *   v1.<iv base64url>.<tag base64url>.<ciphertext base64url>
+ *   v1.<version_clave>.<iv base64url>.<tag base64url>.<ciphertext base64url>
+ *
+ * `v1` identifica el formato y `version_clave` la version de la llave. Hoy
+ * solo existe una llave y se descifra con la version configurada; la rotacion
+ * futura usara ese identificador para elegir la llave anterior.
  *
  * El AAD ata cada valor a su campo. Un numero de cuenta copiado al campo del
  * documento no se puede descifrar. La funcion de descifrado nunca incluye el
@@ -21,6 +25,10 @@ const PREFIJO = 'v1';
 const ALGORITMO = 'aes-256-gcm';
 const LARGO_IV = 12;
 const LARGO_TAG = 16;
+
+export function versionClaveBancariaActual() {
+  return config.CUENTA_BANCARIA_KEY_VERSION;
+}
 
 let claveCache = null;
 
@@ -62,6 +70,7 @@ export function cifrarDatoBancario(valor, campo) {
 
   return [
     PREFIJO,
+    versionClaveBancariaActual(),
     iv.toString('base64url'),
     tag.toString('base64url'),
     cifrado.toString('base64url'),
@@ -74,13 +83,19 @@ export function descifrarDatoBancario(valor, campo) {
   }
 
   const partes = valor.split('.');
-  if (partes.length !== 4 || partes[0] !== PREFIJO) {
+  if (partes.length !== 5 || partes[0] !== PREFIJO) {
     throw new Error('El dato bancario cifrado tiene un formato invalido.');
   }
 
-  const iv = Buffer.from(partes[1], 'base64url');
-  const tag = Buffer.from(partes[2], 'base64url');
-  const cifrado = Buffer.from(partes[3], 'base64url');
+  if (partes[1] !== versionClaveBancariaActual()) {
+    throw new Error(
+      'El dato bancario usa una version de clave no soportada por esta configuracion.',
+    );
+  }
+
+  const iv = Buffer.from(partes[2], 'base64url');
+  const tag = Buffer.from(partes[3], 'base64url');
+  const cifrado = Buffer.from(partes[4], 'base64url');
 
   if (iv.length !== LARGO_IV || tag.length !== LARGO_TAG) {
     throw new Error('El dato bancario cifrado tiene un formato invalido.');

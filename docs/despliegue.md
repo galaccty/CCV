@@ -83,14 +83,33 @@ Reglas:
 - La clave cifra con AES-256-GCM el numero de cuenta y el documento del titular
   del local, y el snapshot de esos datos en cada liquidacion. Nunca se guarda
   en la base ni se escribe en logs.
-- **No cambiar ni perder la clave sin un plan de recifrado.** Si se reemplaza,
-  los datos existentes dejan de poder descifrarse. La rotacion requiere leer
-  con la clave anterior, escribir con la nueva y conservar un respaldo seguro
-  durante la ventana de migracion.
-- Guardar la clave en el gestor de secretos del hosting, con acceso restringido
-  y respaldo fuera del repositorio. No reutilizar `SESSION_SECRET`.
+- Cada valor cifrado guarda la version de la clave en el sobre:
+
+  ```text
+  v1.<version_clave>.<iv>.<tag>.<ciphertext>
+  ```
+
+  `CUENTA_BANCARIA_KEY_VERSION` (por defecto `1`) identifica la clave activa.
+  Cambiarla sin rotar los datos existentes los vuelve ilegibles.
+- **Perder la clave significa perder los numeros de cuenta y documentos.** No
+  se pueden reconstruir desde la base, los respaldos de la base ni el codigo:
+  el ciphertext sin la clave es inutil. Esto afecta tanto la cuenta del local
+  como los snapshots ya copiados a liquidaciones.
+- Guardar la clave en el gestor de secretos del hosting, con acceso restringido.
+  Mantener ademas un respaldo fuera del servidor, en un gestor de secretos
+  distinto o en custodia offline con al menos dos responsables. Un respaldo
+  solo en el mismo servidor no protege contra la perdida del servidor. No
+  reutilizar `SESSION_SECRET`.
+- **Rotacion futura (aun no implementada):** el identificador de version ya se
+  almacena en cada valor. La rotacion debera leer con la version anterior,
+  escribir con la nueva, recifrar tanto los datos de `local` como los snapshots
+  de liquidaciones, y conservar la clave anterior hasta que no quede ninguna
+  fila con esa version. No cambiar `CUENTA_BANCARIA_KEY_VERSION` hasta que la
+  migracion de recifrado haya terminado y este verificada.
 - El admin solo ve el numero y el documento completos en el detalle de una
-  liquidacion. Las listas, el vendedor y los logs reciben valores enmascarados.
+  liquidacion. Cada una de esas consultas queda registrada en
+  `auditoria_admin` con el actor, la fecha y el `liquidacion_id`. Las listas, el
+  vendedor y los logs reciben valores enmascarados.
 - Antes de desplegar, verificar que la base no contenga numeros de cuenta o
   documentos en columnas de texto plano. Esos datos solo viven en
   `numero_cuenta_cifrado`, `documento_titular_cifrado` y en las columnas

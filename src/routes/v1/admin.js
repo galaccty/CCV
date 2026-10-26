@@ -171,7 +171,9 @@ router.post(
 
 router.get('/liquidaciones/:id', async (req, res) => {
   const id = esquemaIdPositivo.parse(req.params.id);
-  res.json(await liquidaciones.obtenerLiquidacionAdmin({ id }));
+  res.json(
+    await liquidaciones.obtenerLiquidacionAdmin({ id, admin: req.usuario }),
+  );
 });
 
 router.post(

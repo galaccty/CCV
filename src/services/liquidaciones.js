@@ -920,20 +920,48 @@ export async function listarLiquidacionesVendedor({
   );
 }
 
-export async function obtenerLiquidacionAdmin({ id }) {
-  const liquidacion = await prisma.liquidacion.findUnique({
-    where: { id },
-    include: INCLUIR_DETALLE,
+export async function obtenerLiquidacionAdmin({ id, admin = null }) {
+  return withTransaccion(async (tx) => {
+    const liquidacion = await tx.liquidacion.findUnique({
+      where: { id },
+      include: INCLUIR_DETALLE,
+    });
+
+    if (!liquidacion) throw errorNoEncontrado('Liquidacion no encontrada.');
+
+    const salida = convertirBigIntAJson(
+      serializarLiquidacion(liquidacion, {
+        detalle: true,
+        revelarCompleto: true,
+      }),
+    );
+
+    // Cada lectura del detalle admin puede exponer el numero de cuenta y el
+    // documento completos. La auditoria se escribe en la misma transaccion
+    // que la lectura, sin copiar los valores sensibles.
+    const fuente = fuenteCuentaDestino(liquidacion);
+    const campos = [];
+    if (fuente?.numeroCuentaCifrado) campos.push('numero_cuenta');
+    if (fuente?.documentoTitularCifrado) campos.push('documento_titular');
+
+    await tx.auditoriaAdmin.create({
+      data: {
+        origen: admin ? 'admin' : 'sistema',
+        adminId: admin?.id ?? null,
+        accion: 'ver_datos_bancarios_liquidacion',
+        objeto: 'liquidacion',
+        objetoId: String(liquidacion.id),
+        detalle: {
+          liquidacion_id: liquidacion.id,
+          local_id: liquidacion.localId,
+          campos_revelados: campos,
+          datos_bancarios_completos: campos.length > 0,
+        },
+      },
+    });
+
+    return salida;
   });
-
-  if (!liquidacion) throw errorNoEncontrado('Liquidacion no encontrada.');
-
-  return convertirBigIntAJson(
-    serializarLiquidacion(liquidacion, {
-      detalle: true,
-      revelarCompleto: true,
-    }),
-  );
 }
 
 export async function obtenerLiquidacionVendedor({ usuario, id }) {

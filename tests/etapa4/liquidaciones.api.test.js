@@ -155,6 +155,32 @@ describe('API de liquidaciones', () => {
       assert.equal(detalleAdmin.body.monto_compensado, 40);
       assert.equal(detalleAdmin.body.total_pagado, 0);
 
+      const auditoriaDetalle = await prisma.auditoriaAdmin.findFirst({
+        where: {
+          accion: 'ver_datos_bancarios_liquidacion',
+          objetoId: String(creacion.body.id),
+        },
+        orderBy: { id: 'desc' },
+      });
+      assert.ok(auditoriaDetalle, 'el detalle admin debe quedar auditado');
+      assert.equal(auditoriaDetalle.adminId, admin.id);
+      assert.equal(auditoriaDetalle.objeto, 'liquidacion');
+      assert.equal(
+        auditoriaDetalle.detalle.liquidacion_id,
+        creacion.body.id,
+      );
+      assert.equal(auditoriaDetalle.detalle.local_id, local.id);
+      assert.deepEqual(auditoriaDetalle.detalle.campos_revelados, [
+        'numero_cuenta',
+        'documento_titular',
+      ]);
+      assert.ok(auditoriaDetalle.fecha instanceof Date);
+      assert.equal(
+        JSON.stringify(auditoriaDetalle.detalle).includes(CUENTA.numero_cuenta),
+        false,
+        'la auditoria no debe copiar el numero de cuenta',
+      );
+
       const listaVendedor = await vendedor.cliente.get(
         '/api/v1/vendedor/liquidaciones',
       );

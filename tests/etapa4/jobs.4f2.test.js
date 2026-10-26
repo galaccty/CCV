@@ -120,6 +120,80 @@ describe('job auto_entrega', () => {
     );
   });
 
+  test(
+    'auto_entrega dos veces seguidas no cambia estado, comision ni historial',
+    CON_BASE,
+    async () => {
+      const escenario = await crearSubEnviado({
+        metodoPago: 'efectivo',
+        comision: 2000n,
+        precio: 10000n,
+      });
+      const ahora = new Date();
+
+      const primero = await autoEntregar({
+        ahora,
+        subPedidoIds: [escenario.subPedido.id],
+      });
+      assert.equal(primero.revisados, 1);
+      assert.equal(primero.entregados, 1);
+
+      const subAntes = await prisma.subPedido.findUnique({
+        where: { id: escenario.subPedido.id },
+      });
+      const pedidoAntes = await prisma.pedido.findUnique({
+        where: { id: escenario.pedido.id },
+      });
+      const historialAntes = await prisma.historialEstadoSubPedido.findMany({
+        where: { subPedidoId: escenario.subPedido.id },
+        orderBy: { id: 'asc' },
+      });
+      const comisionesAntes = await prisma.ledger.count({
+        where: {
+          subPedidoId: escenario.subPedido.id,
+          tipo: 'comision',
+        },
+      });
+
+      const segundo = await autoEntregar({
+        ahora,
+        subPedidoIds: [escenario.subPedido.id],
+      });
+      assert.equal(segundo.revisados, 0);
+      assert.equal(segundo.entregados, 0);
+      assert.equal(segundo.errores, 0);
+
+      const subDespues = await prisma.subPedido.findUnique({
+        where: { id: escenario.subPedido.id },
+      });
+      const pedidoDespues = await prisma.pedido.findUnique({
+        where: { id: escenario.pedido.id },
+      });
+      const historialDespues = await prisma.historialEstadoSubPedido.findMany({
+        where: { subPedidoId: escenario.subPedido.id },
+        orderBy: { id: 'asc' },
+      });
+      const comisionesDespues = await prisma.ledger.count({
+        where: {
+          subPedidoId: escenario.subPedido.id,
+          tipo: 'comision',
+        },
+      });
+
+      assert.deepEqual(subDespues, subAntes);
+      assert.deepEqual(pedidoDespues, pedidoAntes);
+      assert.deepEqual(historialDespues, historialAntes);
+      assert.equal(comisionesDespues, comisionesAntes);
+      assert.equal(comisionesDespues, 1);
+      assert.equal(
+        await prisma.ledger.count({
+          where: { subPedidoId: escenario.subPedido.id, tipo: 'venta' },
+        }),
+        1,
+      );
+    },
+  );
+
   test('dos instancias simultaneas respetan el candado del job', CON_BASE, async () => {
     const escenario = await crearSubEnviado({ metodoPago: 'efectivo' });
     const ahora = new Date();

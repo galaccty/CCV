@@ -71,9 +71,10 @@ de producción y los mismos secretos que la API.
 8. `verificacion_integridad` (`41006`)
 
 Cada paso toma su propio candado. Se puede usar para una corrida manual de
-diagnóstico o como única entrada diaria si no se quiere configurar un cron por
-job; para las frecuencias de expiración y auto-entrega conviene programar los
-jobs individuales con más frecuencia. El resultado se imprime como JSON.
+diagnóstico o como única entrada si no se quiere configurar un cron por job.
+**Si se usa un único cron con `job:todos`, debe ejecutarse cada 5 a 10 minutos:**
+la expiración de pagos y la auto-entrega no pueden esperar a una corrida diaria.
+El resultado se imprime como JSON.
 
 ## Alertas que generan los jobs y webhooks
 

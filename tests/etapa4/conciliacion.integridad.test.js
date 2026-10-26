@@ -50,72 +50,101 @@ async function prepararLocalConDeuda(monto = 5000n) {
 }
 
 describe('job conciliacion_nocturna', () => {
-  test('detecta una cuenta alterada y no la corrige', CON_BASE, async () => {
-    const local = await prepararLocalConDeuda(5000n);
-    const cuentaAntes = await prisma.cuentaLocal.findUnique({
-      where: { localId: local.id },
-    });
-    assert.equal(cuentaAntes.saldoDeuda, 5000n);
-
-    const alterado = cuentaAntes.saldoDeuda + 700n;
-
-    try {
-      await escribirSaltandoTriggers(
-        `UPDATE "cuenta_local" SET "saldo_deuda" = ${alterado} WHERE "local_id" = ${local.id}`,
-      );
-
-      const primero = await conciliar({ localIds: [local.id] });
-      assert.equal(primero.revisados, 1);
-      assert.equal(primero.con_diferencias, 1);
-      assert.equal(primero.alertas, 1);
-
-      const alerta = await prisma.alerta.findUnique({
-        where: { clave: `conciliacion:local:${local.id}` },
-      });
-      assert.ok(alerta);
-      assert.equal(alerta.tipo, 'conciliacion_saldo');
-      assert.equal(alerta.estado, 'abierta');
-      assert.equal(alerta.localId, local.id);
-      assert.equal(alerta.detalle.diferencias[0].campo, 'saldo_deuda');
-      assert.equal(
-        alerta.detalle.diferencias[0].cuenta,
-        alterado.toString(),
-      );
-      assert.equal(alerta.detalle.diferencias[0].ledger, '5000');
-
-      const cuentaDespues = await prisma.cuentaLocal.findUnique({
+  test(
+    'detecta una cuenta alterada, deduplica la alerta y no corrige la cuenta',
+    CON_BASE,
+    async () => {
+      const local = await prepararLocalConDeuda(5000n);
+      const cuentaAntes = await prisma.cuentaLocal.findUnique({
         where: { localId: local.id },
       });
-      assert.equal(
-        cuentaDespues.saldoDeuda,
-        alterado,
-        'el job no debe corregir la cuenta',
-      );
+      assert.equal(cuentaAntes.saldoDeuda, 5000n);
 
-      const segundo = await conciliar({ localIds: [local.id] });
-      assert.equal(segundo.con_diferencias, 1);
-      assert.equal(
-        await prisma.alerta.count({
-          where: {
-            clave: `conciliacion:local:${local.id}`,
-          },
-        }),
-        1,
-      );
-      assert.equal(
-        (
-          await prisma.cuentaLocal.findUnique({
-            where: { localId: local.id },
-          })
-        ).saldoDeuda,
-        alterado,
-      );
-    } finally {
-      await escribirSaltandoTriggers(
-        `UPDATE "cuenta_local" SET "saldo_deuda" = ${cuentaAntes.saldoDeuda} WHERE "local_id" = ${local.id}`,
-      );
-    }
-  });
+      const alterado = cuentaAntes.saldoDeuda + 700n;
+
+      try {
+        await escribirSaltandoTriggers(
+          `UPDATE "cuenta_local" SET "saldo_deuda" = ${alterado} WHERE "local_id" = ${local.id}`,
+        );
+
+        const primero = await conciliar({ localIds: [local.id] });
+        assert.equal(primero.revisados, 1);
+        assert.equal(primero.con_diferencias, 1);
+        assert.equal(primero.alertas, 1);
+
+        const alerta = await prisma.alerta.findUnique({
+          where: { clave: `conciliacion:local:${local.id}` },
+        });
+        assert.ok(alerta);
+        assert.equal(alerta.tipo, 'conciliacion_saldo');
+        assert.equal(alerta.estado, 'abierta');
+        assert.equal(alerta.localId, local.id);
+        assert.equal(alerta.detalle.diferencias[0].campo, 'saldo_deuda');
+        assert.equal(
+          alerta.detalle.diferencias[0].cuenta,
+          alterado.toString(),
+        );
+        assert.equal(alerta.detalle.diferencias[0].ledger, '5000');
+
+        const creadaEn = alerta.creadaEn;
+        const primeraDeteccion = alerta.ultimaDeteccionEn;
+
+        const cuentaDespues = await prisma.cuentaLocal.findUnique({
+          where: { localId: local.id },
+        });
+        assert.equal(
+          cuentaDespues.saldoDeuda,
+          alterado,
+          'el job no debe corregir la cuenta',
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const segundo = await conciliar({ localIds: [local.id] });
+        assert.equal(segundo.con_diferencias, 1);
+        assert.equal(segundo.alertas, 1);
+
+        const alertaFinal = await prisma.alerta.findUnique({
+          where: { clave: `conciliacion:local:${local.id}` },
+        });
+        assert.ok(alertaFinal);
+        assert.equal(
+          alertaFinal.id,
+          alerta.id,
+          'la misma inconsistencia debe reutilizar la alerta abierta',
+        );
+        assert.equal(alertaFinal.estado, 'abierta');
+        assert.equal(
+          alertaFinal.creadaEn.getTime(),
+          creadaEn.getTime(),
+          'la fecha de creacion no debe cambiar',
+        );
+        assert.ok(
+          alertaFinal.ultimaDeteccionEn > primeraDeteccion,
+          'la fecha de ultima deteccion debe actualizarse',
+        );
+        assert.equal(
+          await prisma.alerta.count({
+            where: {
+              clave: `conciliacion:local:${local.id}`,
+            },
+          }),
+          1,
+        );
+        assert.equal(
+          (
+            await prisma.cuentaLocal.findUnique({
+              where: { localId: local.id },
+            })
+          ).saldoDeuda,
+          alterado,
+        );
+      } finally {
+        await escribirSaltandoTriggers(
+          `UPDATE "cuenta_local" SET "saldo_deuda" = ${cuentaAntes.saldoDeuda} WHERE "local_id" = ${local.id}`,
+        );
+      }
+    },
+  );
 });
 
 describe('job verificacion_integridad', () => {

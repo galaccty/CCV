@@ -162,6 +162,54 @@ enum OrigenAdmin {
   @@map("origen_admin")
 }
 
+// ---------------------------------------------------------------------------
+// Alertas operativas (Etapa 4f-2)
+// ---------------------------------------------------------------------------
+// No son un registro financiero: sirven para que el admin vea diferencias de
+// conciliacion, fallos de jobs y reembolsos que requieren accion manual. La
+// clave estable evita duplicar la misma alerta en cada corrida.
+
+model Alerta {
+  id                Int             @id @default(autoincrement())
+  clave             String          @unique @db.VarChar(255)
+  tipo              String          @db.VarChar(80)
+  severidad         SeveridadAlerta @default(media)
+  estado            EstadoAlerta    @default(abierta)
+  titulo            String          @db.VarChar(200)
+  detalle           Json?
+  localId           Int?            @map("local_id")
+  pedidoId          Int?            @map("pedido_id")
+  pagoId            Int?            @map("pago_id")
+  reembolsoId       Int?            @map("reembolso_id")
+  subPedidoId       Int?            @map("sub_pedido_id")
+  creadaEn          DateTime        @default(now()) @map("creada_en") @db.Timestamptz(3)
+  actualizadaEn     DateTime        @updatedAt @map("actualizada_en") @db.Timestamptz(3)
+  ultimaDeteccionEn DateTime        @default(now()) @map("ultima_deteccion_en") @db.Timestamptz(3)
+  resueltaEn        DateTime?       @map("resuelta_en") @db.Timestamptz(3)
+  resueltaPor       Int?            @map("resuelta_por")
+  notaResolucion    String?         @map("nota_resolucion") @db.Text
+
+  @@index([estado, tipo])
+  @@index([localId, estado])
+  @@index([creadaEn])
+  @@map("alerta")
+}
+
+enum EstadoAlerta {
+  abierta
+  resuelta
+
+  @@map("estado_alerta")
+}
+
+enum SeveridadAlerta {
+  baja
+  media
+  alta
+
+  @@map("severidad_alerta")
+}
+
 // ===========================================================================
 // ETAPA 2 - CORTE VERTICAL
 // ===========================================================================
@@ -839,6 +887,7 @@ enum TipoPago {
 
 enum EstadoPago {
   pendiente
+  expirado
   aprobado
   rechazado
   reembolsado
